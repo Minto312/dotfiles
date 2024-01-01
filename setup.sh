@@ -50,6 +50,7 @@ function console() {
 
 function full() {
     echo "Installing full apps"
+    add_repo
     for app in "${all_apps[@]}"; do
         echo "Installing $app"
         apt install $app -y
