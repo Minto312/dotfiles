@@ -21,17 +21,29 @@ function help() {
 
 function add_repo() {
     # code
-        apt install wget gpg
+        apt install wget gpg -y
         wget -qO- https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > packages.microsoft.gpg
+        if [ $? -ne 0 ]; then
+            echo "Failed to download the key."
+            exit 1
+        fi
         install -D -o root -g root -m 644 packages.microsoft.gpg /etc/apt/keyrings/packages.microsoft.gpg
+        if [ $? -ne 0 ]; then
+            echo "Failed to install the key."
+            exit 1
+        fi
         sh -c 'echo "deb [arch=amd64,arm64,armhf signed-by=/etc/apt/keyrings/packages.microsoft.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list'
         rm -f packages.microsoft.gpg
         apt install apt-transport-https -y
 
     # docker
-        apt install ca-certificates curl gnupg
+        apt install ca-certificates curl gnupg -y
         install -m 0755 -d /etc/apt/keyrings
         curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+        if [ $? -ne 0 ]; then
+            echo "Failed to download the Docker key."
+            exit 1
+        fi
         chmod a+r /etc/apt/keyrings/docker.gpg
         echo \
             "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
