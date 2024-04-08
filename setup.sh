@@ -1,7 +1,7 @@
 #!/bin/bash
 
 basic_apps=(
-    "vim" "git" 
+    "zsh" "vim" "git" 
 )
 additional_apps=(
     "docker-ce" "docker-ce-cli" "containerd.io" "docker-buildx-plugin" "docker-compose-plugin" 
@@ -55,15 +55,18 @@ function add_repo() {
 }
 
 function console() {
-    echo "Installing console apps"
+    # Install basic apps
     for app in "${basic_apps[@]}"; do
         echo "Installing $app"
         apt install $app -y
     done
+
+    # zsh
+    chsh -s $(which zsh)
 }
 
 function full() {
-    echo "Installing full apps"
+    # Install full apps
     add_repo
     for app in "${all_apps[@]}"; do
         echo "Installing $app"
@@ -84,8 +87,8 @@ function main(){
         exit 1
     fi
 
+    chown _apt /var/lib/update-notifier/package-data-downloads/partial/
     apt update
-    apt upgrade -y
 
     case "$1" in
         -c|--console)
