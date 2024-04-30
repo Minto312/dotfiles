@@ -4,6 +4,10 @@ for file in $ZDOTDIR/*.zsh; do
     source $file
 done
 
+# 日本語入力できるようにする
+eval $(/usr/bin/locale-check C.UTF-8)
+
+
 # ------------------------------
 # General Settings
 # ------------------------------
