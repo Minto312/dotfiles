@@ -100,10 +100,10 @@ tmp_sprompt="%{${fg[yellow]}%}%r is correct? [Yes, No, Abort, Edit]:%{${reset_co
 
 # rootユーザ時(太字にし、アンダーバーをつける)
 if [ ${UID} -eq 0 ]; then
-  tmp_prompt="%B%U${tmp_prompt}%u%b"
-  tmp_prompt2="%B%U${tmp_prompt2}%u%b"
-  tmp_rprompt="%B%U${tmp_rprompt}%u%b"
-  tmp_sprompt="%B%U${tmp_sprompt}%u%b"
+  tmp_prompt="${tmp_prompt}"
+  tmp_prompt2="${tmp_prompt2}"
+  tmp_rprompt="${tmp_rprompt}"
+  tmp_sprompt="${tmp_sprompt}"
 fi
 
 PROMPT=$tmp_prompt    # 通常のプロンプト
