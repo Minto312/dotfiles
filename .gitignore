@@ -48,6 +48,7 @@
 !/.xsessionrc
 !/.config/
 !/.config/**
+/.config/nvim/lazy-lock.json
 !/.gitignore_global
 !/.gitconfig_shared
 
