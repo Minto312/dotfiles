@@ -1,0 +1,15 @@
+[user]
+	name = Minto312
+	email = karinto3219@gmail.com
+[pull]
+	ff = only
+	rebase = false
+[init]
+	defaultBranch = main
+[core]
+	autocrlf = false
+	ignorecase = false
+	editor = nvim
+	quotepath = false
+[color]
+	ui = true
