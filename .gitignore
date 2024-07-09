@@ -11,6 +11,8 @@
 !/set_up.sh
 !/zsh/.zshrc
 !/zsh/alias.zsh
+!/zsh/environ.zsh
+
 !/.virc
 !/.vimrc
 !/.vim/
