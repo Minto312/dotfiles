@@ -1,7 +1,7 @@
 #!/bin/bash
 
 basic_apps=(
-    "zsh" "git" 
+    "zsh" "neovim" 
 )
 additional_apps=(
     "docker-ce" "docker-ce-cli" "containerd.io" "docker-buildx-plugin" "docker-compose-plugin" 
