@@ -1,5 +1,9 @@
+#utils
 alias ls='ls -lha'
+alias clip='xsel --clipboard --input'
+alias pwdc='pwd | clip'
 
+#git
 alias gs='git status'
 alias ga='git add'
 gc() {
