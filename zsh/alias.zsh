@@ -10,3 +10,12 @@ gc() {
 
     git commit -m "$combined_args"
 }
+
+#docker
+db() {
+    docker build -t "$1":"$2" .
+}
+dr() {
+    docker rm $1
+    docker run --name $*
+}
