@@ -7,7 +7,7 @@
 [init]
 	defaultBranch = main
 [core]
-	autocrlf = false
+	autocrlf = input
 	ignorecase = false
 	editor = nvim
 	quotepath = false
