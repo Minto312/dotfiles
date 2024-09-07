@@ -17,7 +17,7 @@ gc() {
 
 #docker
 db() {
-    docker build -t "$1":"$2" .
+    docker build -t "$1":"$2" . ${@:3}
 }
 dr() {
     docker rm $1
