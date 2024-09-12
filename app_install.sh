@@ -62,11 +62,10 @@ function console() {
     done
 
     # neovim
-    wget https://github.com/neovim/neovim-releases/releases/download/v0.10.1/nvim.appimage
-    chmod +x nvim.appimage
-    ./nvim.appimage --appimage-extract
-    ./squashfs-root/usr/bin/nvim
-
+    wget https://github.com/neovim/neovim-releases/releases/download/v0.10.1/nvim-linux64.deb
+    apt install ./nvim-linux64.deb -y
+    rm -f nvim-linux64.deb
+    
     # zsh
     chsh -s $(which zsh)
 }
