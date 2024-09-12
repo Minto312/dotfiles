@@ -1,7 +1,7 @@
 #!/bin/bash
 
 basic_apps=(
-    "zsh" "xsel" "wget"
+    "zsh" "xsel"
 )
 additional_apps=(
     "docker-ce" "docker-ce-cli" "containerd.io" "docker-buildx-plugin" "docker-compose-plugin" 
@@ -62,10 +62,8 @@ function console() {
     done
 
     # neovim
-    wget https://github.com/neovim/neovim-releases/releases/download/v0.10.1/nvim-linux64.deb
-    apt install ./nvim-linux64.deb -y
-    rm -f nvim-linux64.deb
-    
+    mv ./nvim /bin/nvim
+
     # zsh
     chsh -s $(which zsh)
 }
