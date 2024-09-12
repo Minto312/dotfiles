@@ -63,6 +63,7 @@ function console() {
 
     # neovim
     wget https://github.com/neovim/neovim-releases/releases/download/v0.10.1/nvim.appimage
+    chmod +x nvim.appimage
     ./nvim.appimage --appimage-extract
     ./squashfs-root/usr/bin/nvim
 
