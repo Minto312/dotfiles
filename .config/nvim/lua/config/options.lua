@@ -8,7 +8,7 @@ vim.opt.fenc = "utf-8"
 -- バックアップファイルを作らない
 --vim.opt.nobackup = true
 -- スワップファイルを作らない
---vim.opt.noswapfile = true
+vim.opt.noswapfile = true
 -- 編集中のファイルが変更されたら自動で読み直す
 vim.opt.autoread = true
 -- バッファが編集中でもそのほかのファイルを開けるようにする
