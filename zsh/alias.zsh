@@ -21,5 +21,5 @@ db() {
 }
 dr() {
     docker rm $1
-    docker run --name $*
+    docker run --user $(id -u):$(id -g) --name $*
 }
