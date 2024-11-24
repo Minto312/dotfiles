@@ -23,3 +23,17 @@ dr() {
     docker rm $1
     docker run --name $*
 }
+
+dremap() {
+    if [ $# -ne 3 ]; then
+      echo "引数は右記のように指定してください：container name, host port, container port"
+      exit 1
+    fi
+    binds=$(docker inspect --format '{{ .HostConfig.Binds }}' omakase-front)
+    bind=$binds[2,-2]
+
+    docker stop "$1"
+    docker commit "$1" tmp:rerun 
+    dr "$1" -tv $bind -p ${@:2} tmp:rerun bash
+}
+
