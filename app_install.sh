@@ -1,7 +1,7 @@
 #!/bin/bash
 
 basic_apps=(
-    "zsh" "xsel"
+    "zsh" "xsel" "neovim"
 )
 additional_apps=(
     "docker-ce" "docker-ce-cli" "containerd.io" "docker-buildx-plugin" "docker-compose-plugin" 
@@ -51,6 +51,9 @@ function add_repo() {
             tee /etc/apt/sources.list.d/docker.list > /dev/null
 
 
+    # neovim
+        sudo add-apt-repository ppa:neovim-ppa/unstable
+
     apt update
 }
 
@@ -61,8 +64,6 @@ function console() {
         apt install $app -y
     done
 
-    # neovim
-    mv ./nvim /bin/nvim
 
     # zsh
     chsh -s $(which zsh)
