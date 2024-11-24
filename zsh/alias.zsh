@@ -15,6 +15,10 @@ gc() {
     git commit -m "$combined_args"
 }
 
+alias gbs='git switch'
+alias gbc='git switch -c'
+
+
 #docker
 db() {
     docker build -t "$1":"$2" . ${@:3}
