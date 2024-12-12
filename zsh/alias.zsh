@@ -41,3 +41,11 @@ dremap() {
     dr "$1" -tv $bind -p ${@:2} tmp:rerun bash
 }
 
+
+
+mp4-comp() {
+    ffmpeg -i $1 -c:v hevc_nvenc -b:v 2500k -preset slow -pass 1 -an -passlogfile mylogfile -f null /dev/null
+
+    ffmpeg -i $1 -c:v hevc_nvenc -b:v 2500k -r 24 -crf 24 -preset slow -pass 2 -c:a aac -b:a 128k -passlogfile mylogfile cmp_$1
+    rm mylogfile-0.log
+}
