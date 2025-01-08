@@ -1,5 +1,5 @@
 #utils
-alias ls='ls -lha'
+alias ls='ls -lha --color=auto'
 alias clip='xsel --clipboard --input'
 alias pwdc='pwd | clip'
 
