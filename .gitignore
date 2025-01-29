@@ -1,2 +1,7 @@
 zsh/.zcompdump
+
 .config/wezterm/env.lua
+*.lua:Zone.Identifier
+
+.config/nvim/lazy-lock.json
+.config/nvim/lazyvim.json
