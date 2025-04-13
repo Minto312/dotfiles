@@ -9,7 +9,7 @@
 [core]
 	autocrlf = input
 	ignorecase = false
-	editor = nvim
+	editor = vi
 	quotepath = false
 [color]
 	ui = true
