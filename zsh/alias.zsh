@@ -30,6 +30,10 @@ dr() {
     docker run --name $*
 }
 
+dcs() {
+    docker cp ~/.ssh/github $1:/root/.ssh/id_ed25519
+}
+
 dremap() {
     if [ $# -ne 3 ]; then
       echo "引数は右記のように指定してください：container name, host port, container port"
