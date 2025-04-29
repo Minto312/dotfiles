@@ -5,3 +5,5 @@ zsh/.zcompdump
 
 .config/nvim/lazy-lock.json
 .config/nvim/lazyvim.json
+.config/configstore
+.config/gcloud
