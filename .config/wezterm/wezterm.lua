@@ -8,9 +8,9 @@ config.default_prog = { env.wsl_path, "--cd", "~" }
 config.font = wezterm.font("JetBrains Mono")
 config.color_scheme = "AdventureTime"
 config.default_cursor_style = "SteadyBar"
+
 config.keys = require("keys")
-
-
+config.mouse_bindings = require("mouse_bindings")
 config.background = require("background")
 
 return config
