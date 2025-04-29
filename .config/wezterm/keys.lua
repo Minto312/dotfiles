@@ -19,7 +19,7 @@ return {
     key = 'v',
     mods = 'CTRL',
     action = wezterm.action_callback(function(window, pane)
-      window:perform_action(wezterm.action.PasteFrom('ClipboardAndPrimarySelection'), pane)
+      window:perform_action(wezterm.action.PasteFrom('Clipboard'), pane)
     end),
   },
 }
