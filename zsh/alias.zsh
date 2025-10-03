@@ -31,7 +31,7 @@ dr() {
 }
 
 dcs() {
-    docker cp ~/.ssh/github $1:/root/.ssh/id_ed25519
+    docker cp ~/.ssh/github $1:/home/vscode/.ssh/id_ed25519
 }
 
 dremap() {
