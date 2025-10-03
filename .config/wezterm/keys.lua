@@ -22,4 +22,31 @@ return {
       window:perform_action(wezterm.action.PasteFrom('Clipboard'), pane)
     end),
   },
+
+  {
+    key = 't',
+    mods = 'CTRL',
+    action = wezterm.action.SpawnTab 'CurrentPaneDomain',
+  },
+  {
+    key = '\'',
+    mods = 'CTRL',
+    action = wezterm.action.SplitVertical { domain = 'CurrentPaneDomain' },
+  },
+
+  { 
+    key = 'w',
+    mods = 'CTRL',
+    action = wezterm.action.PaneSelect {
+      mode = 'Activate',
+    },
+  },
+  {
+    key = 'g',
+    mods = 'CTRL',
+    action = wezterm.action.PaneSelect {
+      mode = 'SwapWithActive',
+    },
+  },
+
 }
