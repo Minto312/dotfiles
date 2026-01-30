@@ -27,4 +27,7 @@ config.color_scheme = "AdventureTime"
 -- 背景設定
 config.background = require("background")
 
+-- キーバインド（クリップボード処理のみ）
+config.keys = require("keys")
+
 return config
