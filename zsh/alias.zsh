@@ -58,3 +58,12 @@ mp4-comp() {
 
 #claude
 alias claude='claude --dangerously-skip-permissions'
+
+dev() {
+    bash ~/dotfiles/scripts/dev.sh "$@"
+}
+
+#ssh
+sshfw() {
+    ssh -L "$1":127.0.0.1:"$1" develop
+}
