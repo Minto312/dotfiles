@@ -1,4 +1,5 @@
 zsh/.zcompdump
+zsh/env.zsh
 
 .config/wezterm/env.lua
 *.lua:Zone.Identifier
@@ -7,3 +8,10 @@ zsh/.zcompdump
 .config/nvim/lazyvim.json
 .config/configstore
 .config/gcloud
+
+.config/gh/hosts.yml
+.config/gogcli/
+.config/go/telemetry/
+.config/nextjs-nodejs/
+.config/uv/
+.config/zellij/config.kdl.bak
