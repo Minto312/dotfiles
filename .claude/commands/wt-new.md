@@ -67,7 +67,46 @@ git worktree add <パス> -b <ブランチ名> origin/<ブランチ名>
 git worktree add -b <ブランチ名> <パス>
 ```
 
-### 6. 依存関係のインストール
+### 6. git管理対象外ファイルのコピー
+
+元のworktreeからgit管理対象外のファイル（未追跡ファイル）を新しいworktreeにコピーする。
+
+**対象ファイルの取得**:
+```bash
+git ls-files --others
+```
+
+**除外するディレクトリ**（サイズが大きい、または再生成可能なため）:
+- `node_modules`
+- `.next`
+- `dist`
+- `build`
+- `target`
+- `__pycache__`
+- `.cache`
+- `.turbo`
+- `coverage`
+- `.nyc_output`
+- `vendor`
+- `.gradle`
+- `.maven`
+- `.parcel-cache`
+- `.vite`
+- `out`
+
+**コピー処理**:
+```bash
+git ls-files --others | grep -v -E '^(node_modules|\.next|dist|build|target|__pycache__|\.cache|\.turbo|coverage|\.nyc_output|vendor|\.gradle|\.maven|\.parcel-cache|\.vite|out)(/|$)' | while read file; do
+  if [ -f "$file" ]; then
+    mkdir -p "<新worktreeパス>/$(dirname "$file")"
+    cp "$file" "<新worktreeパス>/$file"
+  fi
+done
+```
+
+コピーしたファイルがあれば、完了メッセージでリストを表示する。
+
+### 7. 依存関係のインストール
 
 作成したworktreeディレクトリに移動し、パッケージマネージャの設定ファイルを確認:
 
@@ -77,11 +116,12 @@ git worktree add -b <ブランチ名> <パス>
 - `pnpm-lock.yaml` が存在 → `pnpm install`
 - `Cargo.toml` が存在 → `cargo build`（オプション、重い場合はスキップ可）
 
-### 7. 完了メッセージ
+### 8. 完了メッセージ
 
 以下の情報を表示:
 - 作成したworktreeのパス
 - ブランチ名
+- コピーしたgit管理対象外ファイルのリスト（あれば）
 - 依存関係インストールの結果
 - 移動コマンドの案内: `cd <パス>`
 
