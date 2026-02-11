@@ -3,7 +3,8 @@ local wezterm = require("wezterm")
 local config = wezterm.config_builder()
 
 -- WSL起動設定
-config.default_prog = { env.wsl_path, "--cd", "~" }
+-- config.default_prog = { env.wsl_path, "--cd", "~" }
+config.default_prog = { "pwsh.exe" }
 
 -- 描画専用化（キー・タブ管理を無効化）
 config.disable_default_key_bindings = true
