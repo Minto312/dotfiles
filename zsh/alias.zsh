@@ -58,6 +58,7 @@ mp4-comp() {
 
 #claude
 alias claude='claude --dangerously-skip-permissions'
+alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 
 dev() {
     bash ~/dotfiles/scripts/dev.sh "$@"

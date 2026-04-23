@@ -31,18 +31,32 @@ git -C <worktree-path> branch -vv
 ```
 出力に `[origin/<branch>: gone]` が含まれるものを検出
 
-#### b. マージ済みブランチの検出
+#### b. マージ済みブランチの検出（スカッシュマージ対応）
 
-メインブランチ（main または master）にマージ済みかチェック:
+以下の2つの方法で判定し、**いずれかが該当すればマージ済み**とする。
+
+**方法1: `git merge-tree` による差分チェック**
+
 ```bash
-git branch --merged main
-```
-または
-```bash
-git branch --merged master
+ancestor=$(git merge-base develop <ブランチ名>)
+result=$(git merge-tree $ancestor develop <ブランチ名>)
 ```
 
-**注意**: メインブランチ自体のworktreeは削除候補にしない
+- `result` が空 → マージ済み
+
+**方法2: GitHub PRのマージ状態チェック**
+
+`gh` CLIが利用可能な場合、対応するPRがマージ済みかを確認する:
+
+```bash
+gh pr list --state merged --head <ブランチ名> --json number,title,mergedAt
+```
+
+- 結果が空でない（マージ済みPRが存在する） → マージ済み
+
+方法1は、ブランチの変更がdevelopに含まれているかをローカルで判定する。ただしスカッシュマージ後にdevelop側に追加コミットがあると差分ありと誤判定する場合がある。方法2はGitHub上の実際のマージ状態を確認するため、より正確。
+
+**注意**: `develop`、`main` 自体のworktreeは削除候補にしない
 
 ### 4. 削除候補の表示と確認
 
@@ -58,7 +72,7 @@ git branch --merged master
    理由: リモートで削除済み [gone]
 
 2. /home/user/repo-bugfix (bugfix-123)
-   理由: mainにマージ済み
+   理由: developに取り込み済み（スカッシュマージ含む）
 
 削除を実行しますか？
 ```

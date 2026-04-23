@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
+  },
   "permissions": {
     "defaultMode": "plan"
   },
@@ -9,19 +12,44 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ~/.claude/scripts/alarm.sh"
+            "command": "bash ~/.claude/scripts/notify.sh stop"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/scripts/notify.sh notify"
           }
         ]
       }
     ]
   },
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.claude/scripts/statusline.sh",
+    "padding": 0
+  },
   "enabledPlugins": {
     "github@claude-plugins-official": true,
-    "commit-commands@claude-plugins-official": true,
-    "rust-analyzer-lsp@claude-plugins-official": true
+    "commit-commands@claude-plugins-official": false,
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "playwright@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-plugins": {
+      "source": {
+        "source": "github",
+        "repo": "anthropics/claude-code"
+      }
+    }
   },
   "language": "日本語",
-  "env": {
-    "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
-  }
+  "skipDangerousModePermissionPrompt": true,
+  "effortLevel": "medium"
 }
