@@ -60,7 +60,12 @@ gws drive files get --params '{"fileId": "<ID>", "alt": "media"}' -o local.pdf
 # フォルダへの移動
 gws drive files update --params '{"fileId": "<ID>", "addParents": "<FOLDER>", "removeParents": "root"}' --json '{}'
 
-# 削除
+# 削除（ゴミ箱に移動 / 復元可能）— **基本はこちらを使う**
+gws drive files update --params '{"fileId": "<ID>"}' --json '{"trashed": true}'
+
+# 完全削除（ゴミ箱を経由せず即時削除 / 復元不可）— ⚠️ 通常は使わない
+# files.delete は Drive API の仕様上ゴミ箱を経由しない。誤実行のリスクが高いため、
+# ユーザーから明示的に「完全削除」「ゴミ箱経由しない」等の指示があった場合のみ使用する。
 gws drive files delete --params '{"fileId": "<ID>"}'
 
 # 共有権限追加
@@ -163,6 +168,7 @@ gws gmail users messages list --params '{"userId": "me"}' --page-all --page-limi
 - **`-o` の絶対パス不可**: `-o /tmp/out.json` は弾かれる。カレントディレクトリからの相対パスで指定する
 - **stderr の汚染**: `Using keyring backend: keyring` が stderr に出るのでパイプ処理時は `2>/dev/null` を推奨
 - **delete 系の奇妙な出力**: `files delete` などが `{"saved_file": "download.html", ...}` と返してくることがある（空レスポンスをダウンロード扱いする挙動）が、実際は成功している
+- **`files delete` はゴミ箱を経由しない**: Drive API `files.delete` は即時完全削除で復元不可。ファイルを削除したい場合は原則 `files update` で `{"trashed": true}` を送り、ゴミ箱経由にすること（30 日以内なら復元可能）。「成長記録」のように残しておきたい性格のファイルは、削除ではなく別タイトルで新規作成する運用を検討する
 - **pre-v1.0**: 破壊的変更の可能性あり。コマンドが動かなくなったら `gws --version` でバージョンを確認
 
 ## 関連スキル
