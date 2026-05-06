@@ -100,6 +100,19 @@ local function split_horizontal_volatile_terminal(size, opts)
   end, { count = true })
   
 
+-- nvim 起動中だけターミナル背景色を nvim の背景色に合わせる (OSC 11)
+-- line_height > 1.0 のセル間ギャップで背景が透けるのを防止
+vim.api.nvim_create_autocmd("VimEnter", {
+    callback = function()
+        io.write("\027]11;#222436\027\\")
+    end,
+})
+vim.api.nvim_create_autocmd("VimLeave", {
+    callback = function()
+        io.write("\027]11;reset\027\\")
+    end,
+})
+
 vim.api.nvim_create_autocmd("InsertLeave", {
     pattern = "*",
     callback = function()
