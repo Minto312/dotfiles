@@ -43,7 +43,7 @@ local function close_volatile_terminal(bufnr)
     -- 指定方向にresize
     size = size or vim.v.count
     if size == 0 then
-      size = size or 10 -- デフォルトサイズを設定（ここで10は例です）
+      size = 10
     end
     if size ~= 0 then
       vim.cmd(mods .. ' resize ' .. size)
@@ -90,21 +90,6 @@ local function split_horizontal_volatile_terminal(size, opts)
     vim.api.nvim_set_current_win(current_win)
   end
   
-  -- ターミナル終了時にバッファを閉じる
-  local function open_volatile_terminal(opts)
-    local bufnr = vim.api.nvim_get_current_buf()
-  
-    opts = vim.tbl_extend('force', opts or {}, {
-      on_exit = function()
-        -- ターミナルが終了したら、そのバッファを削除
-        vim.api.nvim_buf_delete(bufnr, { force = true })
-      end
-    })
-  
-    -- ターミナルを開く
-    vim.fn.termopen(vim.o.shell, opts)
-  end
-  
   -- コマンドを定義
   vim.api.nvim_create_user_command('HorizontalVolatileTerminal', function(params)
     split_horizontal_volatile_terminal(params.count, {})
@@ -117,6 +102,10 @@ local function split_horizontal_volatile_terminal(size, opts)
 
 vim.api.nvim_create_autocmd("InsertLeave", {
     pattern = "*",
-    command = "write",
+    callback = function()
+        if vim.bo.modified and vim.bo.buftype == "" and vim.fn.expand("%") ~= "" then
+            vim.cmd("write")
+        end
+    end,
 })
 
