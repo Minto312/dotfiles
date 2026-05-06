@@ -19,6 +19,6 @@ vim.keymap.set("", "<S-h>", "0", { noremap = true })
 vim.keymap.set("", "<S-l>", "$", { noremap = true })
 vim.keymap.set("n", "<leader>s", ":w<CR>", { noremap = true })
 vim.keymap.set("n", "Y", "y$")
-vim.keymap.set("n", "<C-n>", ":NeoTreeShowToggle<Return>", { noremap = true, silent = true })
+
 vim.keymap.set("n", "<C-j>", ":bnext<CR>", { silent = true, noremap = true })
 vim.keymap.set("n", "<C-k>", ":bprev<CR>", { silent = true, noremap = true })
