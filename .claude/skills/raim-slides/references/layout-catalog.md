@@ -49,6 +49,12 @@
 - `title, takeaway, headers:[], rows:[[...]], colWidths:[]`
 - ヘッダ濃緑・偶奇縞。5行程度まで。`autoPage:false`。
 
+### `figureSlide(pres, opts)`
+- `title`（leadText）／任意 `takeaway`(濃緑帯)・`sub`(灰サブ行)／`image:{path}`／任意 `note`(最下部の ▶ 淡緑帯)
+- `image` を本文域に**アスペクト維持でフィット&センタリング**配置（画像実寸を `image-size` で取得）。drawio 等で作った構造図を貼るためのレイアウト。
+- 図を主役にするなら `takeaway`/`sub` を省いて `title + image + note` にすると図が本文域いっぱいに広がる。
+- ワークフロー: `*.drawio`（正本）→ `drawio -x -f png -s 3 -b 12 fig.drawio` → `image.path`。配色は theme と統一。`codex exec -i <png>` で投影可読性をレビュー。
+
 ## 書き出し
 
 ```js

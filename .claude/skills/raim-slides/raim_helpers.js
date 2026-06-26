@@ -55,27 +55,74 @@ module.exports = function (T) {
   // 本文スライド用マスター "RAIM_BODY"。共通フッター（罫線・TLP・©）とヘッダ罫線、
   // そして PowerPoint ネイティブのページ番号フィールド（<a:fld type="slidenum">）を乗せる。
   // → 生成後に PowerPoint でスライドを挿入・削除・並べ替えしても、番号が自動で振り直される（手作業不要）。
+  // 全スライド種をスライドマスター/レイアウト化する。
+  //   - 繰り返し固定要素（帯・ロゴ・会社情報・フッター・罫線）→ objects（通常図形）
+  //   - 可変テキスト（タイトル・章番号・リード文など）→ placeholder
+  // → PowerPoint でどのレイアウトを選んでも、ブランド要素が自動で付く／入力枠が出る／アウトラインに載る。
   function defineMasters(p) {
     const fy = H - 0.34;
-    const objects = [
+    const aspH = (w) => w / (L.aspect || 2.9);       // 横ロゴの高さ
+    const symH = (w) => w / (L.symbolAspect || 0.835); // シンボルの高さ
+
+    // ── RAIM_BODY（本文）──
+    const body = [
       { line: { x: ML, y: 0.9, w: CW, h: 0, line: { color: C.primary, width: 0.75 } } },      // ヘッダ罫線
       { line: { x: ML, y: fy - 0.06, w: CW, h: 0, line: { color: C.border, width: 0.5 } } },  // フッター罫線
       { text: { text: T.company.copyright, options: { x: 0, y: fy, w: W, h: 0.22, fontSize: 7.5, fontFace: F.tagline, color: C.copyright, align: "center", valign: "middle", margin: 0 } } },
     ];
-    if (T.confidentialLabel) objects.push({ text: { text: T.confidentialLabel, options: { x: ML, y: fy, w: 2.4, h: 0.22, fontSize: 7.5, fontFace: F.header, color: C.primaryDark, bold: true, valign: "middle", margin: 0 } } });
-    // 右上デッキ名もレイアウトの通常図形として焼く → 新規スライドにも自動継承
-    if (DECK.title) objects.push({ text: { text: DECK.title, options: { x: 5.0, y: 0.45, w: 4.5, h: 0.3, fontSize: 9, fontFace: F.body, color: C.textGray, align: "right", valign: "middle", margin: 0 } } });
-    // 章番号タグ(緑) + スライドタイトル(章名) + リード文(メッセージ) を「プレースホルダ」として登録。
-    // → PowerPoint で新規スライドに入力枠が出て、ブランド書式のまま打ち込める／アウトライン表示にも載る。
-    objects.push({ placeholder: { options: { name: "slideNo", type: "body", x: ML, y: 0.42, w: 0.46, h: 0.34, fontFace: F.header, fontSize: 13, color: C.white, bold: true, align: "center", valign: "middle", fill: { color: C.primary }, margin: 0 }, text: "01" } });
-    objects.push({ placeholder: { options: { name: "slideTitle", type: "title", x: ML + 0.58, y: 0.42, w: 3.6, h: 0.34, fontFace: F.header, fontSize: 13, color: C.text, bold: true, align: "left", valign: "middle", margin: 0 }, text: "スライドタイトル" } });
-    objects.push({ placeholder: { options: { name: "leadText", type: "body", x: ML, y: 1.04, w: CW, h: 0.5, fontFace: F.header, fontSize: 14, color: C.text, bold: true, align: "left", valign: "top", margin: 0 }, text: "リード文（このスライドの結論を1行で）" } });
-    // ページ番号(slidenum)は writeDeck() の後処理でレイアウトの「通常図形」として焼き込む。
-    // PptxGenJS の slideNumber はプレースホルダ方式で、PowerPoint の新規スライドに継承されないため使わない。
+    if (T.confidentialLabel) body.push({ text: { text: T.confidentialLabel, options: { x: ML, y: fy, w: 2.4, h: 0.22, fontSize: 7.5, fontFace: F.header, color: C.primaryDark, bold: true, valign: "middle", margin: 0 } } });
+    if (DECK.title) body.push({ text: { text: DECK.title, options: { x: 5.0, y: 0.45, w: 4.5, h: 0.3, fontSize: 9, fontFace: F.body, color: C.textGray, align: "right", valign: "middle", margin: 0 } } });
+    body.push({ placeholder: { options: { name: "slideNo", type: "body", x: ML, y: 0.42, w: 0.46, h: 0.34, fontFace: F.header, fontSize: 13, color: C.white, bold: true, align: "center", valign: "middle", fill: { color: C.primary }, margin: 0 }, text: "01" } });
+    body.push({ placeholder: { options: { name: "slideTitle", type: "title", x: ML + 0.58, y: 0.42, w: 3.6, h: 0.34, fontFace: F.header, fontSize: 13, color: C.text, bold: true, align: "left", valign: "middle", margin: 0 }, text: "スライドタイトル" } });
+    body.push({ placeholder: { options: { name: "leadText", type: "body", x: ML, y: 1.04, w: CW, h: 0.5, fontFace: F.header, fontSize: 14, color: C.text, bold: true, align: "left", valign: "top", margin: 0 }, text: "リード文（このスライドの結論を1行で）" } });
+    p.defineSlideMaster({ title: "RAIM_BODY", background: { color: C.white }, objects: body });
+    // ページ番号(slidenum)は writeDeck() の後処理で RAIM_BODY レイアウトに通常図形として焼き込む。
+
+    // ── RAIM_COVER（表紙）──
     p.defineSlideMaster({
-      title: "RAIM_BODY",
+      title: "RAIM_COVER",
       background: { color: C.white },
-      objects,
+      objects: [
+        { rect: { x: 7.7, y: 0, w: 2.3, h: H, fill: { color: C.primaryDark } } },          // 右濃緑帯
+        { rect: { x: 7.56, y: 0, w: 0.12, h: H, fill: { color: C.primary } } },            // 内側ストライプ
+        { image: { path: L.symbolLight, x: 8.55, y: 3.85, w: 0.85, h: symH(0.85) } },      // 帯上の白シンボル
+        { image: { path: L.dark, x: 0.55, y: 0.6, w: 2.5, h: aspH(2.5) } },                // ロゴ
+        { rect: { x: 0.62, y: 3.72, w: 0.95, h: 0.07, fill: { color: C.primary } } },      // 緑アクセント下線
+        { text: { text: T.company.nameEn, options: { x: 0.6, y: 5.12, w: 4, h: 0.25, fontSize: 9, fontFace: F.tagline, color: C.textGray, valign: "middle", margin: 0 } } },
+        { placeholder: { options: { name: "coverTitle", type: "title", x: 0.6, y: 2.1, w: 6.7, h: 1.5, fontFace: F.header, fontSize: 26, color: C.text, bold: true, valign: "top", lineSpacingMultiple: 1.02, margin: 0 }, text: "タイトル" } },
+        { placeholder: { options: { name: "coverSubtitle", type: "body", x: 0.6, y: 3.95, w: 6.7, h: 0.4, fontFace: F.header, fontSize: 15, color: C.text, bold: true, valign: "top", margin: 0 }, text: "サブタイトル" } },
+        { placeholder: { options: { name: "coverMeta", type: "body", x: 0.6, y: 4.45, w: 6.7, h: 0.3, fontFace: F.body, fontSize: 12, color: C.textGray, valign: "top", margin: 0 }, text: "対象 / 日付" } },
+        { placeholder: { options: { name: "coverConf", type: "body", x: 4.8, y: 5.12, w: 2.5, h: 0.25, fontFace: F.header, fontSize: 8, color: C.primaryDark, bold: true, align: "right", valign: "middle", margin: 0 }, text: T.confidentialLabel || "TLP:AMBER" } },
+      ],
+    });
+
+    // ── RAIM_DIVIDER（章扉）──
+    p.defineSlideMaster({
+      title: "RAIM_DIVIDER",
+      background: { color: C.primaryDark },
+      objects: [
+        { rect: { x: 0, y: 0, w: 0.18, h: H, fill: { color: C.primary } } },               // 左緑帯
+        { image: { path: L.light, x: 0.55, y: 0.5, w: 1.9, h: aspH(1.9) } },               // 白ロゴ
+        { rect: { x: 0.62, y: 2.82, w: 1.1, h: 0.06, fill: { color: C.primary } } },        // 緑下線
+        { text: { text: T.company.copyright, options: { x: 0, y: fy, w: W, h: 0.22, fontSize: 7.5, fontFace: F.tagline, color: C.footerOnDark, align: "center", valign: "middle", margin: 0 } } },
+        ...(T.confidentialLabel ? [{ text: { text: T.confidentialLabel, options: { x: ML, y: fy, w: 2.4, h: 0.22, fontSize: 7.5, fontFace: F.header, color: C.white, bold: true, valign: "middle", margin: 0 } } }] : []),
+        { placeholder: { options: { name: "divNo", type: "body", x: 0.6, y: 1.85, w: 3, h: 1.0, fontFace: F.header, fontSize: 54, color: C.primaryLight, bold: true, valign: "top", margin: 0 }, text: "01" } },
+        { placeholder: { options: { name: "divTitle", type: "title", x: 0.6, y: 2.95, w: 8.8, h: 1.2, fontFace: F.header, fontSize: 30, color: C.white, bold: true, valign: "top", lineSpacingMultiple: 1.0, margin: 0 }, text: "章タイトル" } },
+      ],
+    });
+
+    // ── RAIM_CLOSING（裏表紙）──
+    const co = T.company;
+    p.defineSlideMaster({
+      title: "RAIM_CLOSING",
+      background: { color: C.primaryDark },
+      objects: [
+        { rect: { x: 0, y: 0, w: W, h: 0.18, fill: { color: C.primary } } },               // 上緑帯
+        { rect: { x: 0, y: H - 0.18, w: W, h: 0.18, fill: { color: C.primary } } },         // 下緑帯
+        { image: { path: L.light, x: (W - 3.0) / 2, y: 1.35, w: 3.0, h: aspH(3.0) } },      // 白ロゴ（中央）
+        { text: { text: [co.nameJa, co.hq, `代表者：${co.ceo}　設立：${co.founded}`, `${co.url}　${co.email}`].join("\n"), options: { x: 0, y: 3.55, w: W, h: 1.4, fontSize: 10.5, fontFace: F.body, color: C.white, align: "center", valign: "top", lineSpacingMultiple: 1.35, margin: 0 } } },
+        { placeholder: { options: { name: "closeMsg", type: "title", x: 0, y: 2.7, w: W, h: 0.6, fontFace: F.header, fontSize: 26, color: C.white, bold: true, align: "center", valign: "middle", margin: 0 }, text: "Thank you" } },
+      ],
     });
   }
 
@@ -182,23 +229,15 @@ module.exports = function (T) {
   //  レイアウト関数（フルセット）
   // ============================================================
 
-  // 1) 表紙
+  // 1) 表紙（RAIM_COVER マスター：帯・ロゴ・下線・社名は固定、タイトル類はプレースホルダ）
   function coverSlide(pres, o) {
-    const s = pres.addSlide();
-    s.background = { color: C.white };
-    s.addShape("rect", { x: 7.7, y: 0, w: 2.3, h: H, fill: { color: C.primaryDark } });
-    s.addShape("rect", { x: 7.56, y: 0, w: 0.12, h: H, fill: { color: C.primary } });
-    // 濃緑帯の下部に白シンボル（横ロゴは帯幅に収まらないためシンボルのみ）
-    s.addImage({ path: L.symbolLight, x: 8.55, y: 3.85, w: 0.85, h: 0.85 / (L.symbolAspect || 0.835) });
-    addLogo(s, "dark", { x: 0.55, y: 0.6, w: 2.5 });
-    s.addText(o.bigTitle, { x: 0.6, y: 2.1, w: 6.7, h: 1.5, fontSize: 26, fontFace: F.header, color: C.text, bold: true, valign: "top", lineSpacingMultiple: 1.02, margin: 0 });
-    s.addShape("rect", { x: 0.62, y: 3.72, w: 0.95, h: 0.07, fill: { color: C.primary } });
-    if (o.subtitle) s.addText(o.subtitle, { x: 0.6, y: 3.95, w: 6.7, h: 0.4, fontSize: 15, fontFace: F.header, color: C.text, bold: true, margin: 0 });
+    const s = pres.addSlide({ masterName: "RAIM_COVER" });
+    s.addText(o.bigTitle, { placeholder: "coverTitle" });
+    if (o.subtitle) s.addText(o.subtitle, { placeholder: "coverSubtitle" });
     const meta = [o.audience, o.date].filter(Boolean).join("　/　");
-    if (meta) s.addText(meta, { x: 0.6, y: 4.45, w: 6.7, h: 0.3, fontSize: 12, fontFace: F.body, color: C.textGray, margin: 0 });
-    s.addText(T.company.nameEn, { x: 0.6, y: 5.12, w: 4, h: 0.25, fontSize: 9, fontFace: F.tagline, color: C.textGray, valign: "middle", margin: 0 });
+    if (meta) s.addText(meta, { placeholder: "coverMeta" });
     const conf = o.confidentiality !== undefined ? o.confidentiality : T.confidentialLabel;
-    if (conf) s.addText(conf, { x: 4.8, y: 5.12, w: 2.5, h: 0.25, fontSize: 8, fontFace: F.header, color: C.primaryDark, bold: true, align: "right", valign: "middle", margin: 0 });
+    if (conf) s.addText(conf, { placeholder: "coverConf" });
     return s;
   }
 
@@ -218,16 +257,11 @@ module.exports = function (T) {
     return s;
   }
 
-  // 3) 章扉
+  // 3) 章扉（RAIM_DIVIDER マスター：背景・左緑帯・白ロゴ・下線・フッターは固定、番号/章名はプレースホルダ）
   function dividerSlide(pres, o) {
-    const s = pres.addSlide();
-    s.background = T.dividerBg ? { path: T.dividerBg } : { color: C.primaryDark };
-    s.addShape("rect", { x: 0, y: 0, w: 0.18, h: H, fill: { color: C.primary } });
-    addLogo(s, "light", { x: 0.55, y: 0.5, w: 1.9 });
-    if (o.sectionNo) s.addText(o.sectionNo, { x: 0.6, y: 1.85, w: 3, h: 1.0, fontSize: 54, fontFace: F.header, color: C.primaryLight, bold: true, margin: 0 });
-    s.addShape("rect", { x: 0.62, y: 2.82, w: 1.1, h: 0.06, fill: { color: C.primary } });
-    s.addText(o.title, { x: 0.6, y: 2.95, w: 8.8, h: 1.2, fontSize: 30, fontFace: F.header, color: C.white, bold: true, valign: "top", lineSpacingMultiple: 1.0, margin: 0 });
-    addFooter(s, { variant: "light" });
+    const s = pres.addSlide({ masterName: "RAIM_DIVIDER" });
+    if (o.sectionNo) s.addText(o.sectionNo, { placeholder: "divNo" });
+    s.addText(o.title, { placeholder: "divTitle" });
     return s;
   }
 
@@ -383,18 +417,122 @@ module.exports = function (T) {
     return s;
   }
 
-  // 12) 裏表紙
+  // 11.5) 図版スライド（drawio 等の外部図を本文領域にアスペクト維持でフィット配置）
+  //   image:{path} を leadText/sub の下にセンタリング。任意で最下部に ▶ サマリ帯（meceCards と同形式）。
+  function figureSlide(pres, o) {
+    const s = contentSlide(pres, { sectionNo: o.sectionNo, sectionName: o.sectionName, pageNum: o.pageNum });
+    let cy = addTitleBlock(s, { title: o.title, takeaway: o.takeaway });
+    if (o.sub) { s.addText(o.sub, { x: ML, y: cy - 0.05, w: CW, h: 0.35, fontSize: 11, fontFace: F.body, color: C.textGray, margin: 0 }); cy += 0.42; }
+    const hasNote = !!o.note;
+    const areaY = cy + 0.05;
+    const areaBottom = hasNote ? BODY_BOTTOM - 0.6 : BODY_BOTTOM;
+    const areaH = areaBottom - areaY, areaW = CW;
+    // 画像の実寸からアスペクト比を取り、本文領域に収めてセンタリング（image-size は pptxgenjs の依存）
+    let ar = areaW / areaH;
+    try { const { imageSize } = require("image-size"); const d = imageSize(o.image.path); ar = d.width / d.height; } catch (e) { console.warn("[raim] image-size 取得失敗、領域いっぱいに配置:", e.message); }
+    let w = areaW, h = w / ar;
+    if (h > areaH) { h = areaH; w = h * ar; }
+    const x = ML + (areaW - w) / 2, y = areaY + (areaH - h) / 2;
+    s.addImage({ path: o.image.path, x, y, w, h });
+    if (hasNote) {
+      const sy = BODY_BOTTOM - 0.5;
+      s.addShape("rect", { x: ML, y: sy, w: CW, h: 0.5, fill: { color: C.panelBg }, line: { color: C.primary, width: 1 } });
+      // **強調**部分は緑(primaryDark)で持ち帰りポイントを目立たせる
+      const runs = parseBold(o.note).map((r) => r.options && r.options.bold ? { text: r.text, options: { bold: true, color: C.primaryDark } } : r);
+      s.addText([{ text: "▶  ", options: { bold: true, color: C.primaryDark } }, ...runs], { x: ML + 0.15, y: sy, w: CW - 0.3, h: 0.5, fontSize: 11, fontFace: F.body, color: C.text, valign: "middle", margin: 0 });
+    }
+    return s;
+  }
+
+  // 11.6) 手順（左・縦積み）＋ 縦長スクショ等の画像（右）。手順と“実物の証拠”を1枚で見せる
+  function stepsWithImageSlide(pres, o) {
+    const s = contentSlide(pres, { sectionNo: o.sectionNo, sectionName: o.sectionName, pageNum: o.pageNum });
+    let cy = addTitleBlock(s, { title: o.title });
+    if (o.sub) { s.addText(o.sub, { x: ML, y: cy - 0.05, w: CW, h: 0.35, fontSize: 11, fontFace: F.body, color: C.textGray, margin: 0 }); cy += 0.42; }
+    const hasNote = !!o.note;
+    const areaY = cy + 0.05;
+    const areaBottom = hasNote ? BODY_BOTTOM - 0.6 : BODY_BOTTOM;
+    const areaH = areaBottom - areaY;
+    // 右：画像（1枚 or 複数を右寄せで横並び・高さフィット）
+    const imgs = o.images ? o.images : [{ path: o.image.path, caption: o.imageCaption }];
+    const capH = imgs.some((im) => im.caption) ? 0.22 : 0;
+    const igap = 0.18;
+    const aspOf = (p) => { try { const { imageSize } = require("image-size"); const d = imageSize(p); return d.width / d.height; } catch (e) { console.warn("[raim] image-size 取得失敗:", e.message); return 0.75; } };
+    const asp = imgs.map((im) => aspOf(im.path));
+    let imgH = areaH - capH;
+    let block = asp.reduce((sm, a) => sm + imgH * a, 0) + igap * (imgs.length - 1);
+    const maxBlock = CW - 3.4 - 0.3; // 左の手順に最低 3.4in 残す
+    if (block > maxBlock) { const f = maxBlock / block; imgH *= f; block *= f; }
+    let bx = ML + CW - block;
+    const blockX0 = bx;
+    const imgY = areaY + (areaH - capH - imgH) / 2;
+    imgs.forEach((im, k) => {
+      const w = imgH * asp[k];
+      s.addShape("rect", { x: bx - 0.03, y: imgY - 0.03, w: w + 0.06, h: imgH + 0.06, fill: { color: C.white }, line: { color: C.border, width: 1 } });
+      s.addImage({ path: im.path, x: bx, y: imgY, w, h: imgH });
+      if (im.caption) s.addText(im.caption, { x: bx - 0.1, y: imgY + imgH + 0.03, w: w + 0.2, h: 0.2, fontSize: 8, fontFace: F.body, color: C.textGray, align: "center", italic: true, margin: 0 });
+      bx += w + igap;
+    });
+    // 左：手順を縦に積む
+    const steps = o.steps || [];
+    const lw = (blockX0 - 0.35) - ML;
+    const n = steps.length, gap = 0.22;
+    const sh = (areaH - (n - 1) * gap) / Math.max(n, 1);
+    steps.forEach((st, i) => {
+      const y = areaY + i * (sh + gap);
+      s.addShape("rect", { x: ML, y, w: 0.46, h: 0.46, fill: { color: C.primary } });
+      s.addText(st.label || String(i + 1), { x: ML, y, w: 0.46, h: 0.46, fontSize: 15, fontFace: F.header, color: C.white, bold: true, align: "center", valign: "middle", margin: 0 });
+      s.addText(st.title, { x: ML + 0.58, y: y - 0.02, w: lw - 0.58, h: 0.32, fontSize: 13, fontFace: F.header, color: C.primaryDark, bold: true, valign: "middle", margin: 0 });
+      s.addText(parseBold(st.body), { x: ML + 0.58, y: y + 0.3, w: lw - 0.58, h: sh - 0.3, fontSize: 11, fontFace: F.body, color: C.text, valign: "top", lineSpacingMultiple: 1.02, fit: "shrink", margin: 0 });
+    });
+    if (hasNote) {
+      const sy = BODY_BOTTOM - 0.5;
+      s.addShape("rect", { x: ML, y: sy, w: CW, h: 0.5, fill: { color: C.panelBg }, line: { color: C.primary, width: 1 } });
+      const runs = parseBold(o.note).map((r) => r.options && r.options.bold ? { text: r.text, options: { bold: true, color: C.primaryDark } } : r);
+      s.addText([{ text: "▶  ", options: { bold: true, color: C.primaryDark } }, ...runs], { x: ML + 0.15, y: sy, w: CW - 0.3, h: 0.5, fontSize: 11, fontFace: F.body, color: C.text, valign: "middle", margin: 0 });
+    }
+    return s;
+  }
+
+  // 11.7) KPI（左に縦積みの小カード）＋ 画像（右）。スペックの裏取り実機などを横に添える
+  function metricsWithImageSlide(pres, o) {
+    const s = contentSlide(pres, { sectionNo: o.sectionNo, sectionName: o.sectionName, pageNum: o.pageNum });
+    const cy = addTitleBlock(s, { title: o.title, takeaway: o.takeaway });
+    const areaY = cy + 0.1;
+    const footH = o.footnote ? 0.26 : 0;
+    const areaH = (BODY_BOTTOM - footH) - areaY;
+    const leftW = o.leftW || 3.0, gap = 0.3, capH = o.imageCaption ? 0.24 : 0;
+    // 右：画像（高さフィット・アスペクト維持・右寄せ）
+    let ar = 2;
+    try { const { imageSize } = require("image-size"); const d = imageSize(o.image.path); ar = d.width / d.height; } catch (e) { console.warn("[raim] image-size 取得失敗:", e.message); }
+    let imgH = areaH - capH, imgW = imgH * ar;
+    const maxW = CW - leftW - gap;
+    if (imgW > maxW) { imgW = maxW; imgH = imgW / ar; }
+    const imgX = ML + CW - imgW, imgY = areaY + (areaH - capH - imgH) / 2;
+    s.addShape("rect", { x: imgX - 0.03, y: imgY - 0.03, w: imgW + 0.06, h: imgH + 0.06, fill: { color: C.white }, line: { color: C.border, width: 1 } });
+    s.addImage({ path: o.image.path, x: imgX, y: imgY, w: imgW, h: imgH });
+    if (o.imageCaption) s.addText(o.imageCaption, { x: imgX - 0.2, y: imgY + imgH + 0.03, w: imgW + 0.4, h: 0.2, fontSize: 8, fontFace: F.body, color: C.textGray, align: "center", italic: true, margin: 0 });
+    // 左：メトリクスを縦に積む（小カード）
+    const m = o.metrics || [], n = m.length, vgap = 0.2;
+    const mh = (areaH - (n - 1) * vgap) / Math.max(n, 1);
+    m.forEach((mm, i) => {
+      const y = areaY + i * (mh + vgap);
+      s.addShape("rect", { x: ML, y, w: leftW, h: mh, fill: { color: C.panelBg }, line: { color: C.border, width: 0.5 } });
+      s.addShape("rect", { x: ML, y, w: 0.07, h: mh, fill: { color: C.primary } });
+      s.addText([{ text: mm.value, options: { fontSize: 26, bold: true, color: C.primaryDark } }, { text: mm.unit ? (" " + mm.unit) : "", options: { fontSize: 12, bold: true, color: C.primaryDark } }],
+        { x: ML + 0.18, y, w: 1.15, h: mh, fontFace: F.header, align: "left", valign: "middle", margin: 0 });
+      s.addText(mm.label, { x: ML + 1.4, y: y + 0.1, w: leftW - 1.5, h: 0.3, fontSize: 12, fontFace: F.header, color: C.text, bold: true, valign: "top", margin: 0 });
+      if (mm.note) s.addText(mm.note, { x: ML + 1.4, y: y + 0.4, w: leftW - 1.5, h: mh - 0.45, fontSize: 8.5, fontFace: F.body, color: C.textGray, valign: "top", lineSpacingMultiple: 1.0, fit: "shrink", margin: 0 });
+    });
+    if (o.footnote) s.addText(parseBold(o.footnote), { x: ML, y: BODY_BOTTOM - footH + 0.02, w: CW, h: 0.22, fontSize: 8.5, fontFace: F.body, color: C.textGray, italic: true, valign: "middle", margin: 0 });
+    return s;
+  }
+
+  // 12) 裏表紙（RAIM_CLOSING マスター：背景・緑帯・白ロゴ・会社情報は固定、メッセージはプレースホルダ）
   function closingSlide(pres, o) {
     o = o || {};
-    const s = pres.addSlide();
-    s.background = { color: C.primaryDark };
-    s.addShape("rect", { x: 0, y: 0, w: W, h: 0.18, fill: { color: C.primary } });
-    s.addShape("rect", { x: 0, y: H - 0.18, w: W, h: 0.18, fill: { color: C.primary } });
-    addLogo(s, "light", { x: (W - 3.0) / 2, y: 1.35, w: 3.0 });
-    s.addText(o.message || "Thank you", { x: 0, y: 2.7, w: W, h: 0.6, fontSize: 26, fontFace: F.header, color: C.white, bold: true, align: "center", margin: 0 });
-    const co = T.company;
-    const lines = [co.nameJa, co.hq, `代表者：${co.ceo}　設立：${co.founded}`, `${co.url}　${co.email}`];
-    s.addText(lines.join("\n"), { x: 0, y: 3.55, w: W, h: 1.4, fontSize: 10.5, fontFace: F.body, color: C.white, align: "center", valign: "top", lineSpacingMultiple: 1.35, margin: 0 });
+    const s = pres.addSlide({ masterName: "RAIM_CLOSING" });
+    s.addText(o.message || "Thank you", { placeholder: "closeMsg" });
     return s;
   }
 
@@ -443,6 +581,6 @@ module.exports = function (T) {
     setDeck, createPresentation, counter, parseBold, writeDeck,
     addLogo, addFooter, contentSlide, addTitleBlock, addExhibit, addCard, addTable,
     coverSlide, agendaSlide, dividerSlide, bulletSlide, execSummarySlide,
-    meceCardsSlide, pyramidSlide, numbersSlide, comparisonSlide, timelineSlide, tableSlide, closingSlide,
+    meceCardsSlide, pyramidSlide, numbersSlide, comparisonSlide, timelineSlide, tableSlide, figureSlide, stepsWithImageSlide, metricsWithImageSlide, closingSlide,
   };
 };
