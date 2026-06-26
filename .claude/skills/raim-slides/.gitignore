@@ -1,0 +1,6 @@
+node_modules/
+package-lock.json
+# 生成物（ビルドの出力・確認用）
+*.pptx
+*.pdf
+_preview/

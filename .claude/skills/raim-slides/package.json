@@ -1,0 +1,9 @@
+{
+  "name": "raim-slide-template",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Raim Technologies corporate PPTX template (PptxGenJS, theme-driven)",
+  "dependencies": {
+    "pptxgenjs": "^4.0.1"
+  }
+}
