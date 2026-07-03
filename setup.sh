@@ -1,8 +1,7 @@
 #!/bin/bash
 
-ln -s $HOME/dotfiles/zsh/.zshrc $HOME/.zshrc
-ln -s $HOME/dotfiles/vim/.vimrc $HOME/.vimrc
-ln -s $HOME/dotfiles/.config $HOME/.config
+ln -sfn $HOME/dotfiles/zsh/.zshrc $HOME/.zshrc
+ln -sfn $HOME/dotfiles/.config $HOME/.config
 
 # Claude Code settings
 # ~/.claude 配下のうちバージョン管理対象のみ dotfiles へ symlink する。
@@ -19,3 +18,20 @@ for d in agents commands scripts skills; do
     fi
     ln -sfn "$HOME/dotfiles/.claude/$d" "$HOME/.claude/$d"
 done
+
+# --- 手動セットアップ (gitignore 済みの資格情報・環境依存のため自動化しない) ---
+#
+# discord-notify スキルを使う場合は webhook を配置する:
+#   mkdir -p ~/.config/discord-notify
+#   echo "DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'" > ~/.config/discord-notify/env
+#
+# DNS dangling 監視を使う場合:
+#   mkdir -p ~/.config/dns-dangling-monitor
+#   echo "DNS_DANGLING_WEBHOOK='https://discord.com/api/webhooks/...'" > ~/.config/dns-dangling-monitor/env
+#
+# systemd --user unit を有効化する (必要なものだけ。~/.config は symlink 済みなのでファイルは配置済み):
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now dns-dangling-monitor.timer
+#   systemctl --user enable --now mutagen-daemon.service
+#   # vllm-tunnel は gpu-soroban への SSH 到達性がある環境でのみ enable する
+#   # openclaw-gateway は token 埋込のため管理外 (各マシンでローカル配置)
