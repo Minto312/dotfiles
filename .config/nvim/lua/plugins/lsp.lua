@@ -7,6 +7,7 @@ return {
                 "vtsls",
                 "gopls",
                 "rust-analyzer",
+                "marksman",
             },
         },
     },

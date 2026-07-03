@@ -68,3 +68,23 @@ dev() {
 sshfw() {
     ssh -L "$1":127.0.0.1:"$1" develop
 }
+
+# Drag&Drop upload: WezTerm にドロップしたファイルを cwd に転送
+# 前提: Windows 側で upload-agent が 127.0.0.1:9999 を listen し、
+#       SSH の RemoteForward 9999 で develop からトンネルされていること
+# 使い方: `u <dropped-path>` (ドロップでパスが paste される)
+u() {
+    if [ $# -eq 0 ]; then
+        echo "usage: u <path> [<path>...]" >&2
+        return 2
+    fi
+    local cwd=$PWD src rc=0
+    for src in "$@"; do
+        if ! printf '%s\t%s\n' "$src" "$cwd" | nc -q 1 127.0.0.1 9999 2>/dev/null; then
+            echo "upload-agent unreachable (127.0.0.1:9999). RemoteForward を確認" >&2
+            return 1
+        fi
+        echo "queued: $src -> $cwd"
+    done
+    return $rc
+}

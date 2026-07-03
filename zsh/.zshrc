@@ -149,3 +149,19 @@ function cd() {
   # 出力解析 (sentinel) を壊すため抑制する。
   [[ -o interactive ]] && ls
 }
+
+# OpenClaw Completion
+source "/home/karinto/.openclaw/completions/openclaw.zsh"
+
+# bun completions
+[ -s "/home/karinto/.bun/_bun" ] && source "/home/karinto/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
+
+# Android SDK
+export JAVA_HOME="$HOME/android-dev/jdk-17.0.2"
+export ANDROID_HOME="$HOME/Android/Sdk"
+export NDK_HOME="$ANDROID_HOME/ndk/27.0.12077973"
+export PATH="$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"

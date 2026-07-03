@@ -21,4 +21,11 @@ return {
       window:perform_action(wezterm.action.PasteFrom('Clipboard'), pane)
     end),
   },
+  -- Shift+Enter を Alt+Enter として送る (Claude Code の改行入力用)
+  -- 端末は通常 Shift+Enter と Enter を区別しないため、別シーケンスに変換する
+  {
+    key = 'Enter',
+    mods = 'SHIFT',
+    action = wezterm.action.SendKey { key = 'Enter', mods = 'ALT' },
+  },
 }
