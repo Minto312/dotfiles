@@ -57,7 +57,9 @@ mp4-comp() {
 }
 
 #claude
-alias claude='claude --dangerously-skip-permissions'
+# SHELL=/usr/bin/bash: Claude Code の Bash ツールを (端末の zsh とは別に) bash で動かす。
+# zsh スナップショット由来の出力崩れ対策。詳細: workspace/machine/troubleshooting/claude-code-bash-output-unreliable.md
+alias claude='SHELL=/usr/bin/bash claude --dangerously-skip-permissions'
 alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 
 dev() {
