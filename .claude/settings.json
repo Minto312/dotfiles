@@ -5,6 +5,7 @@
   "permissions": {
     "defaultMode": "plan"
   },
+  "model": "opus[1m]",
   "hooks": {
     "Stop": [
       {
@@ -50,6 +51,8 @@
     }
   },
   "language": "日本語",
+  "effortLevel": "xhigh",
+  "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
-  "effortLevel": "medium"
+  "inputNeededNotifEnabled": true
 }
