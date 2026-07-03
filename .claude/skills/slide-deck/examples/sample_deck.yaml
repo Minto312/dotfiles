@@ -1,0 +1,97 @@
+deck:
+  title: "AI導入による営業生産性改革 提案"
+  client: "Acme Corp."
+  project_code: "ACM-AI-2026"
+  date: "2026-05-04"
+  confidentiality: "Confidential"
+  accent: "blue"
+
+slides:
+  - layout: Cover_Consulting
+    big_title: "AI導入により営業1人あたり受注額を1.8x引き上げる"
+    tagline: "With Narrative Intelligence"
+    subtitle: "Prepared for Acme Corp."
+
+  - layout: ExecSummary_1pager
+    section_no: "01"
+    section_name: "Executive Summary"
+    title: "AI営業支援で受注額1.8x、初期投資は6ヶ月で回収可能"
+    takeaway: "Phase 1（90日）でROI実証 → 全社展開へ"
+    bullets:
+      - "**現状の課題**：商談準備に営業時間の42%が消費されている"
+      - "**打ち手の効果**：類似事例で受注率+18pt、サイクル▲30%"
+      - "**投資回収**：初期2,400万円 / 月次効果420万円 / 6ヶ月Payback"
+    exhibits:
+      - label: "Exhibit 1"
+        title: "営業時間配分：商談準備が最大の非中核工数"
+        source: "社内タイムログ調査 N=124, 2026年Q1"
+      - label: "Exhibit 2"
+        title: "他社導入実績：受注率の改善幅"
+        source: "Gartner 2025 Sales AI Benchmark"
+      - label: "Exhibit 3"
+        title: "投資回収シミュレーション"
+        source: "Raim試算, 2026-04"
+        notes: "保守費除く / 5%割引率"
+    implications:
+      - "Decide: Phase 1 PoC予算 2,400万円の承認"
+      - "Next: 5/15までに対象部門3部のキックオフ"
+
+  - layout: KeyFindings_MECE_3to5
+    section_no: "02"
+    section_name: "Key Findings"
+    title: "営業生産性の阻害要因は『情報・判断・実行』の3層に集約される"
+    cards:
+      - no: "01"
+        heading: "情報の分散"
+        body: "顧客情報がCRM/メール/Slackに分断。検索コスト1商談あたり47分"
+      - no: "02"
+        heading: "判断の属人化"
+        body: "提案戦略がトップ営業の暗黙知に依存。再現性が低い"
+      - no: "03"
+        heading: "実行の遅延"
+        body: "提案書作成リードタイム平均5.2日。商談機会の30%を逸失"
+    summary_support: "3層を横断するAIエージェント基盤が解となる"
+
+  - layout: Rec_Recommendation
+    section_no: "03"
+    section_name: "Recommendation"
+    title: "推奨：自社開発のAIエージェントを段階導入する（買収/SaaSは却下）"
+    takeaway: "ベンダーロックインを避け、独自データ資産を最大化"
+    supports:
+      - "**競合優位性**：自社CRM 8年分のデータが学習資産になる"
+      - "**コスト**：3年TCOでSaaS比▲35%（Exhibit 1）"
+      - "**スピード**：MVP 90日で立ち上げ可能（Exhibit 2）"
+    evidence_refs:
+      - "Exhibit 1"
+      - "Exhibit 2"
+
+  - layout: Risks_Mitigations_Table
+    section_no: "04"
+    section_name: "Risks"
+    title: "主要リスクは『データ品質』と『現場定着』の2つ、いずれも統制可能"
+    rows:
+      - risk: "学習データの品質不足で精度が出ない"
+        impact: "High"
+        likelihood: "Med"
+        mitigation: "Phase 0でデータクレンジング実施、品質指標を合意"
+        owner: "Data Lead"
+        severe: true
+      - risk: "現場の利用率が伸びず定着しない"
+        impact: "High"
+        likelihood: "Med"
+        mitigation: "営業KPIに組込み、週次ハンズオン"
+        owner: "Sales Ops"
+      - risk: "個人情報の漏洩"
+        impact: "High"
+        likelihood: "Low"
+        mitigation: "オンプレLLM、監査ログ、SOC2準拠"
+        owner: "Security"
+
+  - layout: Appendix_Exhibits
+    section_no: "A1"
+    section_name: "Appendix"
+    exhibit:
+      label: "Exhibit A1"
+      title: "投資回収シミュレーション詳細"
+      source: "Raim試算, 2026-04"
+      notes: "保守費除く / 5%割引率 / 為替USD=150円固定"

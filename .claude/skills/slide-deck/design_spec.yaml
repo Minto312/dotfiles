@@ -1,0 +1,191 @@
+# presentation_design_spec_consulting_dxr_generic.yaml
+# Style: Consulting Firm Deck (McK/BCG/Bain-like) x DXR web tone
+# McK Executive "high-density, clean, exhibit-driven" を反映
+
+全体デザイン設定:
+  トーン: "コンサル品質（明快・論理・再現性） + ブランドトーン（硬質・ミニマル・知的）"
+  ブランド要素:
+    タグライン: "With Narrative Intelligence"
+    使い方: "表紙/章扉/最終ページで主に使用。本文では過度に露出させない。"
+
+  スライド基本:
+    アスペクト比: "16:9"
+    単位: "in"
+    ページサイズ_in: { w: 13.333, h: 7.5 }
+    セーフマージン: { left: 0.60, right: 0.45, top: 0.30, bottom: 0.50 }
+
+    読み順ゾーニング:
+      title_zone:       { y: 0.52, h: 0.58, rule: "結論（So What）を1〜2行で断定" }
+      summary_zone:     { y: 1.10, h: 0.70, rule: "Key takeaways 2〜3点（5秒理解）" }
+      exhibit_zone:     { y: 1.85, h: 3.60, rule: "Exhibit（証拠）最大3つ。枠で管理" }
+      implication_zone: { y: 5.50, h: 1.00, rule: "意思決定/次アクション（短く、動詞始まり）" }
+
+    グリッド:
+      columns: 12
+      gutter_in: 0.20
+      align_priority: ["left", "top"]
+      rhythm:
+        baseline: "4pt相当の垂直リズムで揃える"
+        paragraph_spacing_rule: "本文は行間でなく段落間余白で可読性を作る"
+
+  カラーシステム:
+    neutral:
+      bg: "#FFFFFF"
+      text: "#0E0E0E"
+      text_sub: "#303030"
+      line: "#C2C2C2"
+      panel: "#2B2B2B"
+      panel_deep: "#0C0C0C"
+      text_on_panel: "#FFFFFF"
+      line_soft: "#D0D0D0"
+      line_strong: "#8A8A8A"
+    brand:
+      blue_deep: "#182B90"
+      gold: "#C3A763"
+    status:
+      good: "#609C87"
+      bad:  "#C00000"
+    使用制約:
+      slide_color_budget: "ニュートラル + アクセント1色（青 or 金）まで"
+      black_usage_rule: "全面黒禁止。黒は帯/パネル/反転で論点を締める用途に限定"
+      dark_area_budget: "1枚あたりスライド面積の15〜20%以下"
+
+  タイポグラフィ:
+    font:
+      ja: "游ゴシック"
+      en: "Inter"
+    scale:
+      running_header: { pt: 12, weight: "Regular" }
+      title:          { pt: 24, weight: "Bold" }
+      subtitle:       { pt: 13, weight: "Regular" }
+      body:           { pt: 11, weight: "Regular" }
+      body_bold:      { pt: 11, weight: "Bold" }
+      caption:        { pt: 9,  weight: "Regular" }
+      chart_axis:     { pt: 9,  weight: "Regular" }
+      footnote:       { pt: 8,  weight: "Regular" }
+      exhibit_label:  { pt: 9,  weight: "Bold" }
+    writing_rules:
+      headline_rule: "スライドタイトルは『結論（So What）を一文で（断定）』"
+      headline_guides:
+        - "説明タイトル禁止（〜について、〜の概要 は避ける）"
+        - "可能なら数値/比較語を含める（例：+3pt、2x、Top-2）"
+      bullets_rule:
+        max_levels: 2
+        max_bullets_per_block: 5
+        marker: "—"
+      emphasis_rule:
+        primary: "太字"
+        secondary: "反転パネル"
+        tertiary: "短い金の下線（単語〜短句のみ）"
+        forbidden: ["影", "グラデ", "装飾アイコン乱用", "面での派手な色塗り"]
+
+  共通固定要素:
+    running_header:
+      enabled: true
+      region: { x: 0.60, y: 0.30, w: 12.31, h: 0.24 }
+      content: "Deck Title / Client Name / Project Code"
+      style: { font: "running_header", color: "neutral.text_sub", align: "left" }
+    page_frame:
+      title_region:    { x: 0.60, y: 0.52, w: 12.31, h: 0.58 }
+      subtitle_region: { x: 0.60, y: 1.00, w: 12.31, h: 0.35 }
+      body_region:     { x: 0.60, y: 1.35, w: 12.31, h: 5.30 }
+    footer:
+      enabled: true
+      left_meta:   { align: "left",  style: "footnote", content: "Date / Confidentiality" }
+      center_copy: { align: "center",style: "footnote", content: "Copyright © 20XX Company. All Rights Reserved." }
+      right_page:  { align: "right", style: "footnote", content: "Page #" }
+
+  Exhibitシステム:
+    原則:
+      - "主要主張には必ず根拠Exhibitを紐付ける"
+      - "1スライド最大3Exhibit"
+      - "Exhibitは枠を持つ（浮かせない）"
+      - "本文は解釈、Exhibitは証拠"
+    label:
+      format: "Exhibit {n}."
+      position: "Exhibit枠の左上（枠外）"
+      style: { font: "exhibit_label", color: "neutral.text" }
+    title:
+      rule: "図の説明ではなく、図が示す事実/結論を書く（短句）"
+      style: { font: "caption", color: "neutral.text" }
+    frame:
+      border: { enabled: true, color: "neutral.line_soft", pt: 0.75 }
+      padding_in: { x: 0.12, y: 0.10 }
+    source:
+      position: "Exhibit枠の左下（枠外）"
+      style: { font: "footnote", color: "neutral.text_sub" }
+      rule: "出典・期間・単位は必須"
+    notes:
+      position: "Exhibit枠の右下（枠外）"
+      style: { font: "footnote", color: "neutral.text_sub" }
+      rule: "定義/前提/除外条件を集約"
+
+  UIプリミティブ:
+    divider:
+      weak:   { color: "neutral.line_soft", pt: 0.75 }
+      strong: { color: "neutral.line_strong", pt: 1.25 }
+    panel:
+      dark:
+        fill: "neutral.panel"
+        text: "neutral.text_on_panel"
+        padding_in: { x: 0.18, y: 0.14 }
+        corner_radius: 0
+      light:
+        fill: "neutral.bg"
+        text: "neutral.text"
+        border: { enabled: true, color: "neutral.line_soft", pt: 0.75 }
+        padding_in: { x: 0.18, y: 0.14 }
+        corner_radius: 0
+    chip:
+      section_no:
+        shape: "rect"
+        fill: "neutral.panel"
+        text: "neutral.text_on_panel"
+        style: "caption"
+        padding_in: { x: 0.10, y: 0.06 }
+    underline_gold:
+      color: "brand.gold"
+      pt: 2.0
+      rule: "単語〜短句のみ"
+    key_label:
+      type: "left-rail"
+      rule: "本文ブロック左に細い縦線（brand.blue_deep または neutral.line_strong）"
+    takeaway_band:
+      style: "panel.dark"
+      height_in: 0.35
+      text_style: "subtitle"
+      rule: "summary_zoneに1本だけ。最大1行"
+
+  deck_architecture:
+    order:
+      - "Cover"
+      - "Executive Summary"
+      - "Situation & Objective"
+      - "Key Findings (MECE)"
+      - "Implications / Options"
+      - "Recommendation"
+      - "Implementation Plan"
+      - "Risks & Mitigations"
+      - "Appendix"
+    navigation:
+      style: "chip.section_no + 小さな英字セクション名"
+      position: "左上（running_header直下）"
+
+  運用ガードレール:
+    logic:
+      so_what_title: true
+      one_slide_one_message: true
+      mece_check: true
+      evidence_first: "数字/図表がある主張のみ採用"
+      exhibit_required_for_claim: "主要主張はExhibit参照必須"
+    density:
+      max_objects_per_slide: 10
+      max_exhibits_per_slide: 3
+      max_chart_per_slide: 1
+      max_bullets_in_summary_zone: 3
+      dark_area_budget: "15〜20%以下"
+    consistency:
+      left_edge_lock_x: 0.60
+      header_footer_always_on: true
+      section_numbering: "01-09。AppendixはA1, A2…"
+      exhibit_numbering: "本文Exhibit 1..n、AppendixはExhibit A1..n"
