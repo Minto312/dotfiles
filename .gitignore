@@ -15,3 +15,32 @@ zsh/env.zsh
 .config/nextjs-nodejs/
 .config/uv/
 .config/zellij/config.kdl.bak
+
+# --- secrets / credentials (このリポジトリは PUBLIC。絶対にコミットしない) ---
+.config/Bitwarden CLI/
+.config/gws/
+.config/mf/
+.config/rclone/
+.config/tigervnc/
+.config/dns-dangling-monitor/env
+.config/discord-notify/
+.config/systemd/user/openclaw-gateway.service
+
+# --- security tooling configs (API キー等が混入しうるため管理外) ---
+.config/nuclei/
+.config/subfinder/
+.config/uncover/
+
+# --- application state / caches (dotfiles ではないランタイム状態) ---
+.config/.wrangler/
+.config/draw.io/
+.config/google-chrome/
+.config/google-chrome-for-testing/
+.config/projects-cockpit/
+.config/libreoffice/
+
+# --- systemd の enable 状態 (symlink)。unit 本体のみ管理する ---
+.config/systemd/user/*.target.wants/
+
+# --- editor swap files ---
+*.swp

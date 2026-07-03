@@ -4,3 +4,9 @@ package-lock.json
 *.pptx
 *.pdf
 _preview/
+# JINGS 案件の勉強会スライド成果物（汎用スキル本体ではないため管理外）
+build_jings.js
+talk-script.md
+fig-*.drawio
+fig-*.png
+shot-*.png
