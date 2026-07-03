@@ -1,0 +1,15 @@
+[Unit]
+Description=DNS dangling monitor (subzy + nuclei)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/dns-dangling-monitor/env
+ExecStart=%h/dotfiles/scripts/dns-dangling-monitor/run.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target
