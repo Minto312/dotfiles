@@ -4,9 +4,12 @@ package-lock.json
 *.pptx
 *.pdf
 _preview/
-# JINGS 案件の勉強会スライド成果物（汎用スキル本体ではないため管理外）
-build_jings.js
-talk-script.md
-fig-*.drawio
+# 案件のデッキ作成はスキル外の作業ディレクトリで行う（SKILL.md 参照）。
+# スキル内に紛れ込んだ案件の build スクリプト・図版・素材を保険で除外する。
+# 追跡するのは雛形の build_example.js のみ。
+build_*.js
+!build_example.js
+*.drawio
 fig-*.png
 shot-*.png
+talk-script.md
