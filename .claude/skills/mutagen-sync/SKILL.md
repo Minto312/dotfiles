@@ -8,7 +8,7 @@ allowed-tools: Bash, Read, Write, Edit, Glob
 
 # Mutagen 同期セッション管理スキル
 
-develop (このマシン) と Windows クライアント間の Mutagen 双方向同期セッションを管理する。セッションのホームは **Windows 側のデーモン** (Option A 構成)。Claude はコマンドを実行するのではなく、**ユーザーに Windows 側で実行してもらう正しいコマンドを生成・提示**し、`/home/karinto/workspace/machine/dev/sync-sessions.md` にレジストリとして記録する役目を負う。
+develop (このマシン) と Windows クライアント間の Mutagen 双方向同期セッションを管理する。セッションのホームは **Windows 側のデーモン** (Option A 構成)。Claude はコマンドを実行するのではなく、**ユーザーに Windows 側で実行してもらう正しいコマンドを生成・提示**し、`/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md` にレジストリとして記録する役目を負う。
 
 レジストリは必ず上記の絶対パス (machine ワークスペース配下) に作成・更新すること。CWD 依存の相対パスで書かないこと。
 
@@ -17,7 +17,7 @@ develop (このマシン) と Windows クライアント間の Mutagen 双方向
 - develop 側: Mutagen CLI が `~/.local/bin/mutagen` にインストール済み、systemd user unit `mutagen-daemon.service` で常駐
 - Windows 側: ユーザー自身で Mutagen CLI をインストール済み（Scoop 推奨: `scoop install mutagen`）
 - Windows → develop への SSH 接続が鍵認証で通る状態（wezterm での接続と同じ流儀）
-- 詳細は `dev/sync-mutagen.md` を参照
+- 詳細は `dev/sync-mutagen/README.md` を参照
 
 ## サブコマンド
 
@@ -37,7 +37,7 @@ develop (このマシン) と Windows クライアント間の Mutagen 双方向
 
 1. ユーザーから 1〜3 を聞き取る (既に引数で与えられていればそれを使う)。local path が未指定ならデフォルト `C:/Users/karinto/Documents/sync/<session-name>` を採用し、その旨を明示してユーザーの確認を取る
 2. remote path が develop 側に実在するか `ls -ld <remote_path>` で確認。存在しなければ作成するか確認を取る
-3. `/home/karinto/workspace/machine/dev/sync-sessions.md` を読み、同名セッションが既にないか確認 (ファイルが無ければ新規作成)
+3. `/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md` を読み、同名セッションが既にないか確認 (ファイルが無ければ新規作成)
 4. 下記テンプレートに値を埋めてコマンドを生成
 
     ```powershell
@@ -52,11 +52,11 @@ develop (このマシン) と Windows クライアント間の Mutagen 双方向
 
     cmd.exe の場合はバッククォートの代わりに `^` を使う旨を併記する。
 
-5. `/home/karinto/workspace/machine/dev/sync-sessions.md` にエントリを追記 (下記フォーマット)
+5. `/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md` にエントリを追記 (下記フォーマット)
 6. ユーザーに「このコマンドを Windows の PowerShell で実行してください」と明示して提示
 7. 実行後、Windows 側で `mutagen sync list` を実行して Status が `Watching` になっていることを確認するよう案内
 
-#### レジストリ形式 (`/home/karinto/workspace/machine/dev/sync-sessions.md`)
+#### レジストリ形式 (`/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md`)
 
 各セッションは下記ブロックで記録する:
 
@@ -73,20 +73,20 @@ develop (このマシン) と Windows クライアント間の Mutagen 双方向
 
 ### `list` — セッション一覧
 
-`/home/karinto/workspace/machine/dev/sync-sessions.md` を読んで登録されているセッション名と用途を一覧表示する。
+`/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md` を読んで登録されているセッション名と用途を一覧表示する。
 
 併せて、ユーザーに Windows 側で `mutagen sync list` を実行するよう案内し、実際のステータスと照合させる (レジストリは Claude が管理するメタ情報で、真のソースは Windows 側デーモン)。
 
 ### `remove` — セッション削除
 
-1. `/home/karinto/workspace/machine/dev/sync-sessions.md` から該当エントリを探す
+1. `/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md` から該当エントリを探す
 2. Windows で実行するコマンドを提示:
 
     ```powershell
     mutagen sync terminate <session-name>
     ```
 
-3. ユーザーの確認後、`/home/karinto/workspace/machine/dev/sync-sessions.md` から該当ブロックを削除
+3. ユーザーの確認後、`/home/karinto/workspace/machine/dev/sync-mutagen/sessions.md` から該当ブロックを削除
 
 ### `pause` / `resume` — 一時停止・再開
 
