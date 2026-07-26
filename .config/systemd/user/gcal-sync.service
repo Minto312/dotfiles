@@ -1,0 +1,13 @@
+[Unit]
+Description=gcal-sync daemon (Google Calendar 複数アカウント相互同期)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/gcal-sync daemon --appdata %h/workspace/machine/dev/gcal-sync/appdata
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
