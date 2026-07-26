@@ -48,11 +48,13 @@
     "padding": 0
   },
   "enabledPlugins": {
-    "github@claude-plugins-official": true,
     "commit-commands@claude-plugins-official": false,
-    "rust-analyzer-lsp@claude-plugins-official": true,
+    "frontend-design@claude-plugins-official": true,
+    "github@claude-plugins-official": true,
     "playwright@claude-plugins-official": true,
-    "frontend-design@claude-plugins-official": true
+    "rust-analyzer-lsp@claude-plugins-official": true,
+    "drawio@drawio": true,
+    "ppt-master@ppt-master": true
   },
   "extraKnownMarketplaces": {
     "claude-code-plugins": {
@@ -60,11 +62,28 @@
         "source": "github",
         "repo": "anthropics/claude-code"
       }
+    },
+    "drawio": {
+      "source": {
+        "source": "github",
+        "repo": "jgraph/drawio-mcp"
+      }
+    },
+    "ppt-master": {
+      "source": {
+        "source": "github",
+        "repo": "hugohe3/ppt-master"
+      }
     }
   },
   "language": "日本語",
   "effortLevel": "xhigh",
   "tui": "fullscreen",
   "skipDangerousModePermissionPrompt": true,
-  "inputNeededNotifEnabled": true
+  "theme": "dark",
+  "autoCompactEnabled": true,
+  "teammateMode": "in-process",
+  "remoteControlAtStartup": true,
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
 }
