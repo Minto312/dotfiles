@@ -92,9 +92,25 @@ notes/ の索引は本節に一本化（別途 INDEX.md は作らない）。フ
 - <作成した記録ファイルを追記していく>
 ```
 
-### 4. 完了報告
+### 4. AGENTS.md シンボリックリンクの作成
 
-- 作成/更新したファイル（`CLAUDE.md`, `notes/`）を列挙する。
+クロスツール標準名の `AGENTS.md` を `CLAUDE.md` への **相対** シンボリックリンクとして張り、他のエージェントツールも同じ指示を読めるようにする。実体は常に `CLAUDE.md` に一本化する（編集対象は CLAUDE.md のみ）。
+
+```bash
+# 既存の AGENTS.md がある場合は壊さない
+if [ -e AGENTS.md ] || [ -L AGENTS.md ]; then
+  echo "AGENTS.md already exists — skip"
+else
+  ln -s CLAUDE.md AGENTS.md   # 相対リンク: ワークスペースごと移動しても壊れない
+fi
+```
+
+- 既に `AGENTS.md` が **実体ファイル** として存在する場合は上書きしない。実体が CLAUDE.md と AGENTS.md に分かれている状態をユーザーに伝え、どちらを SoT にするか確認する。
+- リンク先は必ず相対パス（`CLAUDE.md`）にする。絶対パスにしない。
+
+### 5. 完了報告
+
+- 作成/更新したファイル（`CLAUDE.md`, `notes/`, `AGENTS.md`）を列挙する。
 - CLAUDE.md 内に残した `❓未確認` 項目があれば一覧化し、「次の会話で埋めていく」旨を伝える。
 - 以後この規約に従って自動的に notes/ へ記録していくことを一言添える。
 
