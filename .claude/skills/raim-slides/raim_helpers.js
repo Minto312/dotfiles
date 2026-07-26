@@ -123,7 +123,7 @@ module.exports = function (T) {
         { rect: { x: 0, y: 0, w: W, h: 0.18, fill: { color: C.primary } } },               // 上緑帯
         { rect: { x: 0, y: H - 0.18, w: W, h: 0.18, fill: { color: C.primary } } },         // 下緑帯
         { image: { path: L.light, x: (W - 3.0) / 2, y: 1.35, w: 3.0, h: aspH(3.0) } },      // 白ロゴ（中央）
-        { text: { text: [co.nameJa, co.hq, `代表者：${co.ceo}　設立：${co.founded}`, `${co.url}　${co.email}`].join("\n"), options: { x: 0, y: 3.55, w: W, h: 1.4, fontSize: 10.5, fontFace: F.body, color: C.white, align: "center", valign: "top", lineSpacingMultiple: 1.35, margin: 0 } } },
+        { text: { text: [co.nameJa, co.hq, `代表者：${co.ceo}　設立：${co.founded}`, [co.url, co.email].filter(Boolean).join("　")].filter(Boolean).join("\n"), options: { x: 0, y: 3.55, w: W, h: 1.4, fontSize: 10.5, fontFace: F.body, color: C.white, align: "center", valign: "top", lineSpacingMultiple: 1.35, margin: 0 } } },
         { placeholder: { options: { name: "closeMsg", type: "title", x: 0, y: 2.7, w: W, h: 0.6, fontFace: F.header, fontSize: 26, color: C.white, bold: true, align: "center", valign: "middle", margin: 0 }, text: "Thank you" } },
       ],
     });
