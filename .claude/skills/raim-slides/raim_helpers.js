@@ -27,7 +27,10 @@ module.exports = function (T) {
     try { execSync(`fc-list | grep -i "${name}"`, { stdio: "ignore" }); return true; }
     catch { return false; } // fc-list が無い環境では false（→ Noto に倒れる）
   };
-  const resolveFont = (name) => hasFont(name) ? name : (hasFont("Meiryo UI") ? "Meiryo UI" : "Noto Sans CJK JP");
+  // 最終フォールバックは Windows/PowerPoint 標準の Yu Gothic UI。
+  // 生成環境（Linux 等）に日本語フォントが無い場合に Noto Sans CJK JP へ倒すと、納品先の Windows に Noto が無く
+  // 表紙 title プレースホルダが豆腐化する事故があった（2026-07 AisleOps 面談資料）。描画・納品は実 Office 前提のため Yu Gothic UI に倒す。
+  const resolveFont = (name) => hasFont(name) ? name : (hasFont("Meiryo UI") ? "Meiryo UI" : "Yu Gothic UI");
   const headerFont = resolveFont(T.fonts.header);
   const F = {
     header:  headerFont,

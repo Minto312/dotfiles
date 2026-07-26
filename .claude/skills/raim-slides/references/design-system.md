@@ -23,7 +23,8 @@
 
 ## フォント
 
-`Yu Gothic UI` → 無ければ `Meiryo UI` → `Noto Sans CJK JP` に自動フォールバック（`raim_helpers.js` 冒頭の `resolveFont`、引数 theme は破壊しない）。英字キャプション・ページ番号は `Calibri`。
+`Yu Gothic UI` → 無ければ `Meiryo UI` → **`Yu Gothic UI`（最終フォールバック）** に解決（`raim_helpers.js` 冒頭の `resolveFont`、引数 theme は破壊しない）。英字キャプション・ページ番号は `Calibri`。
+※旧最終フォールバックは `Noto Sans CJK JP` だったが、生成環境（Linux）に日本語フォントが無いまま Noto に倒すと、納品先の Windows に Noto が無く**表紙 title プレースホルダが豆腐化**する事故があった（2026-07）。描画・納品は実 Office 前提のため Windows 標準の Yu Gothic UI へ倒す。
 
 ## レイアウト原則（slidecraft 準拠）
 
