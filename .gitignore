@@ -25,6 +25,7 @@ zsh/env.zsh
 .config/dns-dangling-monitor/env
 .config/discord-notify/
 .config/systemd/user/openclaw-gateway.service
+.config/cra_anthropic_key
 
 # --- security tooling configs (API キー等が混入しうるため管理外) ---
 .config/nuclei/
@@ -38,6 +39,16 @@ zsh/env.zsh
 .config/google-chrome-for-testing/
 .config/projects-cockpit/
 .config/libreoffice/
+.config/inkscape/
+# herdr: config.toml のみ管理し、ログ・ソケット・セッション状態は持たない
+.config/herdr/*.log
+.config/herdr/*.sock
+.config/herdr/session.json
+.config/herdr/session-history.json
+.config/herdr/release-notes.json
+
+# --- herdr が ~/.agents 以下に自前でインストールするスキル (dotfiles 側では dangling link になる) ---
+.claude/skills/herdr
 
 # --- systemd の enable 状態 (symlink)。unit 本体のみ管理する ---
 .config/systemd/user/*.target.wants/
