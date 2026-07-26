@@ -42,5 +42,11 @@ zsh/env.zsh
 # --- systemd の enable 状態 (symlink)。unit 本体のみ管理する ---
 .config/systemd/user/*.target.wants/
 
+# --- プロジェクト側で管理する unit (マシン固有の絶対パスを含むため dotfiles では持たない) ---
+# feedscope: https://github.com/Minto312/feedscope の deploy/ が正。
+#   再作成: cp deploy/feedscope-*.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload
+.config/systemd/user/feedscope-*.service
+.config/systemd/user/feedscope-*.timer
+
 # --- editor swap files ---
 *.swp
