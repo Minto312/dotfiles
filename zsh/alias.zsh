@@ -1,6 +1,6 @@
 #utils
 alias ls='ls -lha --color=auto'
-alias clip='xsel --clipboard --input'
+alias clip='command clip'
 alias pwdc='pwd | clip'
 
 alias chme='sudo chown -R karinto:karinto'

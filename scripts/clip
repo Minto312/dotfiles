@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${WAYLAND_DISPLAY:-}" ]] && command -v wl-copy >/dev/null 2>&1; then
+  exec wl-copy
+fi
+
+if [[ -n "${DISPLAY:-}" ]] && command -v xsel >/dev/null 2>&1; then
+  exec xsel --clipboard --input
+fi
+
+if [[ -n "${DISPLAY:-}" ]] && command -v xclip >/dev/null 2>&1; then
+  exec xclip -selection clipboard
+fi
+
+encoded=$(base64 | tr -d '\n')
+osc52=$'\033]52;c;'"$encoded"$'\a'
+
+if { printf '%s' "$osc52" > /dev/tty; } 2>/dev/null; then
+  exit 0
+fi
+
+printf 'clip: no graphical clipboard and no controlling terminal for OSC 52\n' >&2
+exit 1
