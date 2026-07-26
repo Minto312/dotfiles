@@ -1,0 +1,37 @@
+onboarding = false
+# herdr configuration  (~/.config/herdr/config.toml)
+# 変更後は `herdr server reload-config` で稼働中サーバーに反映される。
+# 既定値・全キーは `herdr --default-config` を参照。
+
+[theme]
+# 組み込みテーマ: catppuccin / terminal / tokyo-night / dracula / nord /
+#                gruvbox / one-dark / solarized / kanagawa / rose-pine / vesper
+name = "tokyo-night"
+auto_switch = false
+
+[ui.toast]
+# 背景ワークスペースのエージェント状態変化を通知する方式。
+#   off      = ポップアップ無し
+#   herdr    = herdr 画面内トースト
+#   terminal = 外側ターミナルにデスクトップ通知を依頼
+#   system   = OS の通知サービスへ直接依頼
+# system にすると wezterm 経由で Windows ネイティブ通知まで届く。
+# Claude Code 側の notify.sh (OSC 777) と併用するため二重に鳴ることがある点は許容。
+delivery = "system"
+
+[ui.sound]
+# ヘッドレス VM + SSH 運用でオーディオデバイスが無いため無効化。
+enabled = true
+
+[session]
+# サーバー再起動後、公式連携 (claude/codex) が報告する session ref を使って
+# エージェントの会話セッションを復元する。zellij の永続運用と同じ思想。
+resume_agents_on_restore = true
+
+[experimental]
+# フルサーバー再起動をまたいでペインの画面履歴を保持する。
+# ※experimental 扱い。挙動が不安定なら false に戻す。
+pane_history = true
+
+[ui]
+agent_panel_sort = "spaces"
