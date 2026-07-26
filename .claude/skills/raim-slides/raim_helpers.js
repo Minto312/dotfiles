@@ -92,7 +92,7 @@ module.exports = function (T) {
         { image: { path: L.dark, x: 0.55, y: 0.6, w: 2.5, h: aspH(2.5) } },                // ロゴ
         { rect: { x: 0.62, y: 3.72, w: 0.95, h: 0.07, fill: { color: C.primary } } },      // 緑アクセント下線
         { text: { text: T.company.nameEn, options: { x: 0.6, y: 5.12, w: 4, h: 0.25, fontSize: 9, fontFace: F.tagline, color: C.textGray, valign: "middle", margin: 0 } } },
-        { placeholder: { options: { name: "coverTitle", type: "title", x: 0.6, y: 2.1, w: 6.7, h: 1.5, fontFace: F.header, fontSize: 26, color: C.text, bold: true, valign: "top", lineSpacingMultiple: 1.02, margin: 0 }, text: "タイトル" } },
+        { placeholder: { options: { name: "coverTitle", type: "title", x: 0.6, y: 2.1, w: 6.7, h: 1.5, fontFace: F.header, fontSize: 26, color: C.text, bold: true, align: "left", valign: "top", lineSpacingMultiple: 1.02, margin: 0 }, text: "タイトル" } },
         { placeholder: { options: { name: "coverSubtitle", type: "body", x: 0.6, y: 3.95, w: 6.7, h: 0.4, fontFace: F.header, fontSize: 15, color: C.text, bold: true, valign: "top", margin: 0 }, text: "サブタイトル" } },
         { placeholder: { options: { name: "coverMeta", type: "body", x: 0.6, y: 4.45, w: 6.7, h: 0.3, fontFace: F.body, fontSize: 12, color: C.textGray, valign: "top", margin: 0 }, text: "対象 / 日付" } },
         { placeholder: { options: { name: "coverConf", type: "body", x: 4.8, y: 5.12, w: 2.5, h: 0.25, fontFace: F.header, fontSize: 8, color: C.primaryDark, bold: true, align: "right", valign: "middle", margin: 0 }, text: T.confidentialLabel || "TLP:AMBER" } },
