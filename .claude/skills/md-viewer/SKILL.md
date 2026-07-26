@@ -12,9 +12,9 @@ allowed-tools: Bash, Read, Write
 
 ## 前提
 
-- ホスト: `develop-1`（既定、Linux）。バインドは `0.0.0.0` のため LAN から閲覧可能。R18 等の機密原稿を扱う場合は SSH ポートフォワード運用に切り替えるか、`viewer.py` の bind を `127.0.0.1` に変更することを検討する。
+- ホスト: `develop`（既定、Linux）。バインドは `0.0.0.0` のため LAN から閲覧可能。R18 等の機密原稿を扱う場合は SSH ポートフォワード運用に切り替えるか、`viewer.py` の bind を `127.0.0.1` に変更することを検討する。
 - 既定ポート: **9876**。占有時はユーザーに別ポートを確認するか、空いているものを提示する。
-- ビューア本体: `viewer.py`（作業ディレクトリ直下に配置されているはず）。無い場合は git からの復元 or ユーザー確認を優先し、勝手に再生成しない。
+- ビューア本体: **本スキルディレクトリに常設**（`~/.claude/skills/md-viewer/viewer.py`）。作業ディレクトリにはコピーしない（ユーザー指示 2026-07-07）。`ROOT = Path.cwd()` のため、**見せたいディレクトリをカレントにして起動**するとそこが公開ルートになる。紛失時は git からの復元 or ユーザー確認を優先し、勝手に再生成しない。
 - 依存: Python 3.10 以上（標準ライブラリのみ）。レンダリングは `marked.js` (12.x) と `github-markdown-css` の CDN 配信。**信頼できる作者の Markdown のみ**を表示する前提（`marked` 12.x は sanitize オプションが廃止されているため、悪意ある入力では XSS の余地あり）。
 
 ## サブコマンド
@@ -23,11 +23,10 @@ allowed-tools: Bash, Read, Write
 
 ### `start` — 起動
 
-1. 既に起動中なら（`status` を実行して確認）二重起動はしない。URL を案内して終了。
-2. 作業ディレクトリに `viewer.py` が無ければ作成する。
-3. 既定ポート `9876` で `python3 viewer.py 9876` を**バックグラウンド**で起動する（Bash の `run_in_background: true`）。
-4. 1 秒待ってから `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:<PORT>/` でヘルスチェック。`200` を確認すること。
-5. 起動メッセージは「`http://develop-1:<PORT>/` で開けます」を中心に簡潔に。
+1. 既に起動中なら（`status` を実行して確認)二重起動はしない。URL を案内して終了。
+2. 公開したいディレクトリをカレントにして、既定ポート `9876` で `python3 ~/.claude/skills/md-viewer/viewer.py 9876` を**バックグラウンド**で起動する（Bash の `run_in_background: true`）。
+3. 1 秒待ってから `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:<PORT>/` でヘルスチェック。`200` を確認すること。
+4. 起動メッセージは「`http://develop:<PORT>/` で開けます」を中心に簡潔に。サブディレクトリのファイルはインデックスに出ないが `/view?file=<相対パス>` で直接開ける。
 
 ポート占有 (`Address already in use`) が出たら、`9877`, `9878` ... と次の空きを試すか、ユーザーに希望ポートを尋ねる。
 
@@ -41,7 +40,7 @@ allowed-tools: Bash, Read, Write
 ### `status` — 状態確認
 
 1. `pgrep -af "python3 viewer.py"` で起動状態とポートを取得（コマンドラインからポート番号を抽出）。
-2. 起動中なら URL（`http://develop-1:<PORT>/`）と PID を返す。停止中ならその旨返す。
+2. 起動中なら URL（`http://develop:<PORT>/`）と PID を返す。停止中ならその旨返す。
 
 ### `restart` — 再起動
 
@@ -57,10 +56,10 @@ allowed-tools: Bash, Read, Write
 
 ## viewer.py の復元
 
-`viewer.py` が紛失している場合、独力で再生成しない。以下を順に試す:
+`~/.claude/skills/md-viewer/viewer.py` が紛失している場合、独力で再生成しない。以下を順に試す:
 
-1. `git log --all --diff-filter=A -- viewer.py` で過去コミットを探し、見つかれば `git show <sha>:viewer.py > viewer.py` で復元。
-2. 別ワークツリー／バックアップから持ってくる。
+1. 過去に viewer.py を置いていたワークスペース（例: `~/workspace/creative/`）やバックアップから持ってくる。持ってきたら `ROOT = Path.cwd().resolve()`（cwd 基準）になっているか確認・修正する。
+2. 各ワークスペースの git 履歴（`git log --all --diff-filter=A -- viewer.py`）から復元。
 3. どちらも不可の場合のみ、ユーザーに「再生成して良いか」を確認してから新規実装する（過去のスキル定義に縛られず、現状の要件で書き直す）。
 
 ## 使い分けの目安
@@ -75,7 +74,7 @@ allowed-tools: Bash, Read, Write
 起動成功時の標準形式:
 
 ```
-http://develop-1:9876/ で開けます（PID: 12345）
+http://develop:9876/ で開けます（PID: 12345）
 ```
 
 失敗時はエラー出力（`viewer.py` のスタックトレース）を貼った上で原因と対処を 1〜2 行で添える。
