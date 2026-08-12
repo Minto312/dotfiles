@@ -1,0 +1,9 @@
+# 0.0.0.0 / [::] で待ち受けていて「意図的」なポート。
+# ここに無いワイルドカード待ち受けは collect.sh が listener:<port> として通知する。
+# 1 行 1 ポート。# 以降はコメント。
+22      # sshd
+41641   # tailscaled (WireGuard)
+68      # DHCP client (systemd-networkd)
+53      # systemd-resolved
+323     # chrony (NTP)
+5057    # feedscope viewer (Tailscale Services 経由で公開。services/feedscope.md)

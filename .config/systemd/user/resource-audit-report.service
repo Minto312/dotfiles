@@ -1,0 +1,18 @@
+[Unit]
+Description=resource-audit: 専用 herdr ペインで週次レポートを書かせる
+Documentation=file://%h/workspace/machine/resources/README.md
+# herdr server が居ないと report.sh は何もせず正常終了する (ログイン前など)。
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/discord-notify/env
+# レポートの前に必ず --deep のスナップショットを採る (ディスク内訳が要るため)。
+ExecStartPre=%h/dotfiles/scripts/resource-audit/collect.sh --deep
+ExecStart=%h/dotfiles/scripts/resource-audit/report.sh
+# du が重いので長めに取る。
+TimeoutStartSec=30min
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,17 @@
+[Unit]
+Description=resource-audit: リソース使用状況のスナップショットを収集する
+Documentation=file://%h/workspace/machine/resources/README.md
+
+[Service]
+Type=oneshot
+# webhook が無くてもユニットを失敗させない ("-" 付き)。
+# dns-dangling-monitor は EnvironmentFile の欠落で起動できなくなったので同じ轍を踏まない。
+EnvironmentFile=-%h/.config/discord-notify/env
+ExecStart=%h/dotfiles/scripts/resource-audit/collect.sh
+TimeoutStartSec=5min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

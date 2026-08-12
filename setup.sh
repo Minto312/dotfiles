@@ -33,5 +33,7 @@ done
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now dns-dangling-monitor.timer
 #   systemctl --user enable --now mutagen-daemon.service
+#   systemctl --user enable --now resource-audit-collect.timer   # リソース棚卸しの日次収集
+#   systemctl --user enable --now resource-audit-report.timer    # 週次レポート (herdr ペインを立てる)
 #   # vllm-tunnel は gpu-soroban への SSH 到達性がある環境でのみ enable する
 #   # openclaw-gateway は token 埋込のため管理外 (各マシンでローカル配置)

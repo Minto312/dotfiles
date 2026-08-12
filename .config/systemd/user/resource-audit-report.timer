@@ -1,0 +1,13 @@
+[Unit]
+Description=Run resource-audit weekly report (herdr pane)
+
+[Timer]
+# 週の入りに読めるよう月曜の朝。:00 / :30 は避ける。
+OnCalendar=Mon *-*-* 09:07:00 Asia/Tokyo
+RandomizedDelaySec=5m
+# 月曜に落ちていた場合は次に起きたとき 1 度だけ拾う。
+Persistent=true
+Unit=resource-audit-report.service
+
+[Install]
+WantedBy=timers.target

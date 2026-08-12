@@ -1,0 +1,13 @@
+[Unit]
+Description=Run resource-audit collector daily
+
+[Timer]
+# :00 / :30 を避ける (他のジョブと重ならないように)。
+OnCalendar=*-*-* 04:12:00 Asia/Tokyo
+RandomizedDelaySec=10m
+# マシンや user session が落ちていた回を 1 度だけ拾う。
+Persistent=true
+Unit=resource-audit-collect.service
+
+[Install]
+WantedBy=timers.target
