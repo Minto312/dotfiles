@@ -59,7 +59,9 @@ mp4-comp() {
 #claude
 # SHELL=/usr/bin/bash: Claude Code の Bash ツールを (端末の zsh とは別に) bash で動かす。
 # zsh スナップショット由来の出力崩れ対策。詳細: workspace/machine/troubleshooting/claude-code-bash-output-unreliable.md
-alias claude='SHELL=/usr/bin/bash claude --effort ultracode --dangerously-skip-permissions'
+# --effort: 推論の深さ。有効値は low/medium/high/xhigh/max (claude --help)。
+#   以前指定していた ultracode は --effort の値ではないので黙って無視されていた。
+alias claude='SHELL=/usr/bin/bash claude --effort xhigh --dangerously-skip-permissions'
 alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 
 dev() {
