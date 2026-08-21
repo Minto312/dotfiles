@@ -6,7 +6,8 @@
 #   2. report.sh が herdr にペインを作れなかったとき、--from-snapshot で
 #      summary.json から機械生成した数値サマリを流す (フォールバック)
 #
-# webhook は discord-notify スキルと同じ ~/.config/discord-notify/env を使う。
+# webhook は resource-audit 専用の ~/.config/resource-audit/env を使う
+# (discord-notify スキルとは別チャンネル。無ければ discord-notify の値に落ちる)。
 # 未設定でも呼び出し側を壊さないよう exit 0 で抜ける (collect.sh と同じ方針)。
 set -euo pipefail
 
@@ -17,10 +18,15 @@ log() { printf '[%s] notify-discord: %s\n' "$(date -Is)" "$*" >&2; }
 
 # 環境変数が優先。systemd unit は EnvironmentFile で渡してくるが、
 # 対話シェルから直に叩く場合はここで読む。
+# 専用 env を先に見る。週次レポートの要約は herdr のペインの claude が直に
+# このスクリプトを叩くので unit の EnvironmentFile が効かない。ここの順序が実質の宛先。
 if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
-  ENV_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/discord-notify/env"
-  # shellcheck source=/dev/null
-  [ -f "$ENV_FILE" ] && . "$ENV_FILE"
+  for ENV_FILE in \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/resource-audit/env" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/discord-notify/env"; do
+    # shellcheck source=/dev/null
+    [ -f "$ENV_FILE" ] && . "$ENV_FILE" && break
+  done
 fi
 WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
 

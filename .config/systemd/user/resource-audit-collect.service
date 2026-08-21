@@ -7,6 +7,9 @@ Type=oneshot
 # webhook が無くてもユニットを失敗させない ("-" 付き)。
 # dns-dangling-monitor は EnvironmentFile の欠落で起動できなくなったので同じ轍を踏まない。
 EnvironmentFile=-%h/.config/discord-notify/env
+# 後に読んだ方が勝つ。resource-audit だけ別チャンネル (webhook 名 develop) に
+# 流すため専用 env で上書きする。無ければ上の discord-notify の値が残る。
+EnvironmentFile=-%h/.config/resource-audit/env
 ExecStart=%h/dotfiles/scripts/resource-audit/collect.sh
 TimeoutStartSec=5min
 Nice=10

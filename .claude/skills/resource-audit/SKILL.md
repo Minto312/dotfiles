@@ -164,4 +164,4 @@ EOF
 | 週次でこのスキルを起動する側 | `~/dotfiles/scripts/resource-audit/report.sh` |
 | Discord 送信口 | `~/dotfiles/scripts/resource-audit/notify-discord.sh` |
 | 常駐サービス個別 | `machine/services/` / `machine/dev/agent-web/` |
-| 通知 | `discord-notify` スキルと同じ webhook (`~/.config/discord-notify/env`) |
+| 通知 | resource-audit 専用 webhook (`~/.config/resource-audit/env`)。無ければ `~/.config/discord-notify/env` に落ちる |

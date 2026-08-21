@@ -14,7 +14,8 @@ PREV_LINK="${STATE_DIR}/previous"
 ALLOW_FILE="${RESOURCE_AUDIT_ALLOW:-${SCRIPT_DIR}/wildcard-allow.txt}"
 RETAIN_DAYS="${RESOURCE_AUDIT_RETAIN_DAYS:-90}"
 
-# webhook は discord-notify と同じものを使う (~/.config/discord-notify/env)。
+# webhook は unit の EnvironmentFile から渡る (~/.config/resource-audit/env が
+# discord-notify/env を上書きする)。手で叩くときは自分で export する。
 # 未設定でも収集は続行する (通知だけスキップ)。
 WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
 

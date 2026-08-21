@@ -6,6 +6,9 @@ Documentation=file://%h/workspace/machine/resources/README.md
 [Service]
 Type=oneshot
 EnvironmentFile=-%h/.config/discord-notify/env
+# 後に読んだ方が勝つ。resource-audit だけ別チャンネル (webhook 名 develop) に
+# 流すため専用 env で上書きする。無ければ上の discord-notify の値が残る。
+EnvironmentFile=-%h/.config/resource-audit/env
 # レポートの前に必ず --deep のスナップショットを採る (ディスク内訳が要るため)。
 ExecStartPre=%h/dotfiles/scripts/resource-audit/collect.sh --deep
 ExecStart=%h/dotfiles/scripts/resource-audit/report.sh
