@@ -1,0 +1,26 @@
+[Unit]
+Description=tldv-ingest: Drive の受け皿フォルダに置かれた音声/動画を tl;dv に取り込む
+Documentation=file://%h/workspace/machine/services/tldv-ingest.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ⚠ systemd --user の PATH には nvm も ~/.local/bin も入っていない。
+#   gws は nvm 配下 (~/.nvm/versions/node/<ver>/bin/gws) にあるので明示する。
+#   node のバージョンが変わっても動くよう、見つからなければ ingest.sh 側が
+#   ~/.nvm/versions/node/*/bin/gws を glob して自力で解決する (GWS_BIN でも上書き可)。
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=%h/dotfiles/scripts/tldv-ingest/ingest.sh
+# 1 本あたり Drive の権限操作 + import + 完了確認。GB 級でも develop はバイト列を
+# 運ばない (tl;dv が Google から直接取る) ので、待つのはメタデータの往復だけ。
+TimeoutStartSec=4min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+# ログは stdout の logfmt。journald → Alloy → VictoriaLogs に入るので
+# 判定と通知は Grafana Alerting 側に任せる (スクリプトは webhook を持たない)。
+SyslogIdentifier=tldv-ingest
+
+[Install]
+WantedBy=default.target
