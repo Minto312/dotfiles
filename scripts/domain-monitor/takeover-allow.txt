@@ -1,0 +1,23 @@
+# 乗っ取り走査の既知 false positive。`<tool><TAB><host><TAB><signature>` の完全一致。
+#
+# ここに載せた検出は消さずに `finding.suppressed=true` を付けて送る。
+# Grafana 側のアラートは suppressed=false だけを見るので、
+# 「記録には残るが鳴らない」状態になる (握りつぶさない)。
+#
+# ## subzy の Gemfury fingerprint は誤爆が多い
+#
+# 当初は「CloudFront のレスポンスに誤マッチする」と記録していたが、**それは狭すぎた**。
+# 2026-08-16 に さくらのレンタルサーバ + nginx で配信している普通の Next.js サイト
+# (sazanami.ai、HTTP 200・実在のコーポレートサイト) でも VULNERABLE と判定された。
+# CloudFront 固有ではなく、**素の 200 応答に対しても誤爆する**と考えたほうがよい。
+#
+# 判定方法: `curl -sS -o /dev/null -w '%{http_code}' https://<host>/` が 2xx/3xx を返し、
+# かつ本文に "gemfury" / "repository not found" が含まれなければ false positive。
+# 新しいホストを監視対象に足すと、ここに 1 行足す作業が発生しうる。
+subzy	metalk.raim-tech.com	Gemfury
+subzy	metalk-staging.raim-tech.com	Gemfury
+subzy	csa.raim-tech.com	Gemfury
+subzy	csa-poc.raim-tech.com	Gemfury
+subzy	csa-staging.raim-tech.com	Gemfury
+subzy	sazanami.ai	Gemfury
+subzy	www.sazanami.ai	Gemfury

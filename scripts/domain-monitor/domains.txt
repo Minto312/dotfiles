@@ -1,0 +1,16 @@
+# domain-monitor が面倒を見る apex ドメイン (1 行 1 ドメイン、`#` でコメント)。
+#
+# ここに書いた apex について:
+#   - 配下サブドメインを discover.sh が passive 列挙する
+#   - apex の NS / MX / TXT(SPF) / _dmarc TXT の変化を check.sh が監視する
+#   - takeover.sh が乗っ取り可能性を走査する
+#
+# ワイルドカードや具体的なサブドメインは書かない (apex のみ)。
+# 「必ず応答すべきホスト」は hosts.critical.txt 側で指定する。
+raim-tech.com
+where-truck.com
+
+# Raim とは無関係だが同じ人が管理しているドメイン。
+# apex は Cloudflare を経由せず さくらのレンタルサーバ (182.48.49.166) を直接指し、
+# www だけ Cloudflare proxy 配下という混在構成 (2026-08-16 時点)。
+sazanami.ai

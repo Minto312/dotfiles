@@ -1,0 +1,15 @@
+[Unit]
+Description=Run domain-monitor check every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+# 既定の AccuracySec=1min では 5 分間隔が揺れる。ハートビート判定に使うので詰める。
+AccuracySec=10s
+RandomizedDelaySec=20s
+# 過去分を遡って埋める意味が無い監視なので Persistent は付けない
+# (起きた直後に何回も走らせても、そのときの状態しか測れない)。
+Persistent=false
+Unit=domain-monitor-check.service
+
+[Install]
+WantedBy=timers.target

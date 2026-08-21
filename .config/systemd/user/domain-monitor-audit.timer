@@ -1,0 +1,13 @@
+[Unit]
+Description=Run domain-monitor discovery + takeover scan daily
+
+[Timer]
+# :00 / :30 を避ける。resource-audit-collect (04:12) ともずらす。
+OnCalendar=*-*-* 04:37:00 Asia/Tokyo
+RandomizedDelaySec=20m
+# マシンや user session が落ちていた回を 1 度だけ拾う。
+Persistent=true
+Unit=domain-monitor-audit.service
+
+[Install]
+WantedBy=timers.target

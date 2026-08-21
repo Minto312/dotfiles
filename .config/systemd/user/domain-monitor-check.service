@@ -1,0 +1,24 @@
+[Unit]
+Description=domain-monitor: 到達性 / TLS 期限 / DNS レコード変化を測定して OTLP に送る
+Documentation=file://%h/workspace/machine/services/domain-monitor.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ⚠ systemd --user の PATH には ~/.local/bin も ~/go/bin も入っていない。
+#   feedscope で「codex が見つからない」を踏んだので、最初から明示する。
+Environment=PATH=%h/.local/bin:%h/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# observability の契約 (docs/instrumentation.md)。アプリが知ってよいのは OTLP だけ。
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+Environment=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+Environment=OTEL_SERVICE_NAME=domain-monitor
+ExecStart=%h/dotfiles/scripts/domain-monitor/check.sh
+# 1 周が 5 分の間隔を食い潰さないように上限を切る。
+TimeoutStartSec=4min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

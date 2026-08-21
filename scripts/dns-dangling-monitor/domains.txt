@@ -1,3 +1,0 @@
-# 監視対象の apex ドメイン (1 行 1 ドメイン、`#` でコメント)
-raim-tech.com
-where-truck.com

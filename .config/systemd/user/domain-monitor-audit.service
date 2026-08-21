@@ -1,0 +1,23 @@
+[Unit]
+Description=domain-monitor: サブドメイン列挙 + 乗っ取り走査 (旧 dns-dangling-monitor の後継)
+Documentation=file://%h/workspace/machine/services/domain-monitor.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# subfinder / subzy / nuclei は ~/go/bin にある。
+Environment=PATH=%h/.local/bin:%h/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+Environment=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+Environment=OTEL_SERVICE_NAME=domain-monitor
+# 列挙 → 走査 の順。前者が hosts.discovered.txt を更新し、後者がそれを読む。
+ExecStart=%h/dotfiles/scripts/domain-monitor/discover.sh
+ExecStart=%h/dotfiles/scripts/domain-monitor/takeover.sh
+TimeoutStartSec=30min
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target
