@@ -1,0 +1,15 @@
+[Unit]
+Description=Run tldv-ingest every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+AccuracySec=30s
+# 同じ分に他の timer と重なるのを避ける
+RandomizedDelaySec=30s
+# 取り込み中のファイルを刈るフェーズがあるので、寝ていた間の分を
+# 遡って何度も走らせる意味は無い。次の 5 分で拾えばよい。
+Persistent=false
+Unit=tldv-ingest.service
+
+[Install]
+WantedBy=timers.target
