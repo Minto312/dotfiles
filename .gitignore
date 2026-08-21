@@ -1,5 +1,6 @@
 zsh/.zcompdump
 zsh/env.zsh
+zsh/env.zsh.backup
 
 .config/wezterm/env.lua
 *.lua:Zone.Identifier
@@ -24,6 +25,8 @@ zsh/env.zsh
 .config/tigervnc/
 .config/dns-dangling-monitor/env
 .config/discord-notify/
+.config/resource-audit/
+.config/tldv-ingest/
 .config/systemd/user/openclaw-gateway.service
 .config/cra_anthropic_key
 
@@ -39,6 +42,9 @@ zsh/env.zsh
 .config/google-chrome-for-testing/
 .config/projects-cockpit/
 .config/libreoffice/
+.config/browseruse/
+.config/NuGet/
+.config/tailscale/
 .config/inkscape/
 # herdr: config.toml のみ管理し、ログ・ソケット・セッション状態は持たない
 .config/herdr/*.log
@@ -58,6 +64,19 @@ zsh/env.zsh
 #   再作成: cp deploy/feedscope-*.{service,timer} ~/.config/systemd/user/ && systemctl --user daemon-reload
 .config/systemd/user/feedscope-*.service
 .config/systemd/user/feedscope-*.timer
+# observability: ~/workspace/observability の deploy/ が正。
+#   再作成: ~/workspace/observability/deploy/install.sh
+.config/systemd/user/observability.service
+# agent-web: machine/dev/agent-web の deploy/ が正 (絶対パスを埋め込む)。
+.config/systemd/user/agent-web.service
+# homepage: ~/workspace/homepage の deploy/ が正。
+.config/systemd/user/homepage.service
+# regista-weekly-report: ~/workspace/regista 側が正。
+.config/systemd/user/regista-weekly-report.service
+.config/systemd/user/regista-weekly-report.timer
 
 # --- editor swap files ---
 *.swp
+
+# --- Claude Code が切る作業用 worktree (中身は各ブランチのチェックアウト) ---
+.claude/worktrees/

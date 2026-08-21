@@ -37,7 +37,9 @@ sudo ~/dotfiles/app_install.sh --console   # 最小構成 (zsh / xsel / neovim)
 資格情報・環境依存のものは自動化していない。詳細は `setup.sh` 末尾のコメント参照。
 
 - **webhook の配置** — `discord-notify` スキルや DNS 監視を使う場合、`~/.config/discord-notify/env` /
-  `~/.config/dns-dangling-monitor/env` に webhook URL を書く。
+  `~/.config/dns-dangling-monitor/env` に webhook URL を書く。resource-audit の通知だけ別チャンネルに
+  出したいときは `~/.config/resource-audit/env` に書く (unit が後読みで上書きする。無ければ
+  `discord-notify` と同じ宛先)。
 - **systemd `--user` unit の有効化** — 必要な unit だけ `systemctl --user enable --now <unit>` する
   (`~/.config` は symlink 済みなので unit ファイルは配置済み)。
 

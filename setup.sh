@@ -25,13 +25,23 @@ done
 #   mkdir -p ~/.config/discord-notify
 #   echo "DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'" > ~/.config/discord-notify/env
 #
-# DNS dangling 監視を使う場合:
-#   mkdir -p ~/.config/dns-dangling-monitor
-#   echo "DNS_DANGLING_WEBHOOK='https://discord.com/api/webhooks/...'" > ~/.config/dns-dangling-monitor/env
+# resource-audit の通知を別チャンネルに出す場合 (省略すると上の discord-notify と同じ宛先):
+#   mkdir -p ~/.config/resource-audit && chmod 700 ~/.config/resource-audit
+#   echo "DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'" > ~/.config/resource-audit/env
+#
+# ドメイン監視 (domain-monitor) は資格情報を持たない。OTLP を吐くだけで、
+# 閾値判定と Discord 通知は observability 基盤の Grafana Alerting 側にある。
+#
+# Drive → tl;dv の自動取り込み (tldv-ingest) を使う場合:
+#   mkdir -p ~/.config/tldv-ingest && chmod 700 ~/.config/tldv-ingest
+#   cp ~/dotfiles/scripts/tldv-ingest/env.example ~/.config/tldv-ingest/env
+#   chmod 600 ~/.config/tldv-ingest/env   # API キーと Drive のフォルダ ID を埋める
 #
 # systemd --user unit を有効化する (必要なものだけ。~/.config は symlink 済みなのでファイルは配置済み):
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now dns-dangling-monitor.timer
+#   systemctl --user enable --now domain-monitor-check.timer   # 到達性/TLS/DNS drift (5 分毎)
+#   systemctl --user enable --now domain-monitor-audit.timer   # サブドメイン列挙と乗っ取り走査 (日次)
+#   systemctl --user enable --now tldv-ingest.timer            # Drive の受け皿 → tl;dv (5 分毎)
 #   systemctl --user enable --now mutagen-daemon.service
 #   systemctl --user enable --now resource-audit-collect.timer   # リソース棚卸しの日次収集
 #   systemctl --user enable --now resource-audit-report.timer    # 週次レポート (herdr ペインを立てる)
