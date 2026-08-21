@@ -109,6 +109,10 @@ reap_one() { # inflight json path
 			"meeting_id=$(printf '%s' "$meeting" | jq -r '.id')" \
 			"duration=$(printf '%s' "$meeting" | jq -r '.duration')" \
 			"took=${age}s"
+		# 投入時の移動が失敗していた場合ここで確実に inbox から出す。
+		# (inflight を消したあとに inbox に残っていると次回に二重投入される)
+		drive_ensure_parent "$file_id" "$TLDV_DONE_FOLDER_ID" ||
+			warn move_failed "file_id=$file_id" "note=inbox に残っている可能性。手で done/ へ移す"
 		finalize "$file_id" "$perm_id" imported
 		attempts_clear "$file_id"
 		return
@@ -117,7 +121,7 @@ reap_one() { # inflight json path
 	if [ "$age" -gt "$IMPORT_TIMEOUT" ]; then
 		err import_timeout "$(q file "$file_name")" "file_id=$file_id" "job_id=$job_id" "age=${age}s"
 		finalize "$file_id" "$perm_id" timeout
-		drive_move "$file_id" "$TLDV_DONE_FOLDER_ID" "$TLDV_FAILED_FOLDER_ID" ||
+		drive_ensure_parent "$file_id" "$TLDV_FAILED_FOLDER_ID" ||
 			warn move_failed "file_id=$file_id"
 		return
 	fi

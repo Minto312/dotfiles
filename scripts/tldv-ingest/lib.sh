@@ -136,6 +136,22 @@ drive_move() { # fileId fromParent toParent
 		--json '{}' >/dev/null
 }
 
+# 目的のフォルダに居ることを保証する。
+# 投入時の done/ への移動が失敗したまま刈り取りで inflight を消すと、
+# ファイルが inbox に残っているので次回に二重投入される。その穴を塞ぐ用。
+drive_ensure_parent() { # fileId targetParent
+	local parents
+	parents=$(drive_file_get "$1" 'parents' | jq -r '.parents[]?' | tr '\n' ' ')
+	case " $parents " in
+	*" $2 "*) return 0 ;;
+	esac
+	local p
+	for p in $parents; do
+		drive_move "$1" "$p" "$2" && return 0
+	done
+	return 1
+}
+
 # 公開ダウンロード URL。⚠ webContentLink ではなくこちらを使う (100MB 超の確認ページ回避)
 public_media_url() { # fileId
 	printf 'https://drive.usercontent.google.com/download?id=%s&export=download&confirm=t' "$1"
