@@ -1,0 +1,24 @@
+[Unit]
+Description=llm-quota: agy / claude / codex の残 quota を測定して OTLP に送る
+Documentation=file://%h/workspace/machine/services/llm-quota.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ⚠ systemd --user の PATH には ~/.local/bin が入っていない。agy / claude / codex は
+#   3 つとも ~/.local/bin にあるので明示する (feedscope で「codex が見つからない」を踏んだ)。
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# observability の契約 (docs/instrumentation.md)。アプリが知ってよいのは OTLP だけ。
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+Environment=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+Environment=OTEL_SERVICE_NAME=llm-quota
+ExecStart=%h/dotfiles/scripts/llm-quota/collect.sh
+# 実測で 1 周 5 秒。claude の起動が遅いときを見ても 2 分あれば足りる。
+TimeoutStartSec=2min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target
