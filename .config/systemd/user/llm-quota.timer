@@ -1,0 +1,14 @@
+[Unit]
+Description=llm-quota を 15 分ごとに走らせる
+Documentation=file://%h/workspace/machine/services/llm-quota.md
+
+[Timer]
+# 3 プロバイダとも「ターンも quota も消費しない」経路なので、測ること自体のコストは
+# プロセス起動ぶんだけ。agy の 5 時間窓の動きを追える程度の粒度にしてある。
+OnCalendar=*:03/15
+RandomizedDelaySec=90
+Persistent=true
+Unit=llm-quota.service
+
+[Install]
+WantedBy=timers.target
