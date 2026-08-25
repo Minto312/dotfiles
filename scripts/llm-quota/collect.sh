@@ -252,7 +252,10 @@ probe_claude() {
 
     if [[ "$line" == "Current session:"* ]]; then
       bucket="session"
-      window="session"
+      # claude の "Current session" は 5 時間窓 (実測: 13:21 UTC 時点の reset が
+      # 17:40 UTC = 4h19m 後)。agy の 5h バケットと同じ window ラベルに揃えておくと
+      # 「5h 窓が 95% を超えた」を provider 横断の 1 ルールで書ける。
+      window="5h"
     else
       # "Current week (all models)" → week-all-models
       bucket="week-$(printf '%s' "$line" \
