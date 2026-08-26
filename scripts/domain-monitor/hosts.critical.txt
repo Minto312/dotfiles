@@ -15,11 +15,15 @@ metalk.raim-tech.com    web
 csa.raim-tech.com       web
 sozan.raim-tech.com     web
 
-# dev.relay は名前のとおり dev 環境 (Mattermost 11.7.0 / AWS ALB ap-northeast-1
-# `mattermost-dev-398472160`、証明書は ACM)。上の「ステージングは入れない」原則の
-# **意図的な例外**で、2026-08-21 に「常時稼働させる」と判断して critical にした。
-# 落としてよい時間帯を作るなら、この行を消してから落とすこと。
-dev.relay.raim-tech.com web
+# dev.relay.raim-tech.com は 2026-08-21 に「常時稼働させる」と判断して critical に
+# 入れていたが、2026-08-26 に外した。dev 環境の ALB 作り直しの最中で、CNAME が
+# 3 日で 3 回付け替わり (mattermost-dev-398472160 → mattermost-network-429027645 →
+# mattermost-shared-1809122045)、現行の共有 ALB は 443 リスナーを持たない
+# (80 は open で 404、443 は connection refused)。常時稼働の前提が崩れているため。
+#
+# 監視自体は discover.sh が日次で拾うので best-effort (monitor.critical=false) で続く。
+# 常時稼働に戻すときはこの行を復活させる:
+#   dev.relay.raim-tech.com web
 
 # where-truck.com は A レコードを持たない (Google Workspace のメール用途)。
 # HTTP を見ると必ず失敗するので dns-only にする。
