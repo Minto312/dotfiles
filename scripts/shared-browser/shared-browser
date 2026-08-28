@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# shared-browser — 人間とエージェントで 1 つのブラウザを共有する
+#
+# 狙いは「人間の手が要るステップ (ログイン・2FA・CAPTCHA) を人間が突破し、
+# 同じセッションのままエージェントに続けさせる」こと。そのために:
+#
+#   Xvfb :99 ← google-chrome (headful, 常駐, プロファイル固定)
+#     │                    └─ --remote-debugging-port=9222 (127.0.0.1 のみ)
+#     │                          ▲ Playwright MCP が --cdp-endpoint でアタッチ
+#     └─ x11vnc → websockify/noVNC → 127.0.0.1:5063
+#                    └─ ssh -R でローカルマシン (lenovo) の localhost へ通す
+#
+# ブラウザは**ホスト**で動かし、X と VNC だけをコンテナに閉じ込める。
+# こうするとダウンロード先・フォント・upload-dnd がホストのまま効く。
+# (ホストに xvfb/x11vnc を入れるには sudo が要るがパスワード必須のため)
+#
+# 常駐サービスにはしない。必要になったときに up し、終わったら down する。
+# 背景と実測は machine/dev/shared-browser/README.md
+set -euo pipefail
+
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+DISPLAY_NUM=${SB_DISPLAY:-:99}
+GEOMETRY=${SB_GEOMETRY:-1600x900x24}
+NOVNC_PORT=${SB_NOVNC_PORT:-5063}   # ⚠ 5060/5061 はブラウザが SIP 用に拒否する
+CDP_PORT=${SB_CDP_PORT:-9222}
+CLIENT_HOST=${SB_CLIENT_HOST:-lenovo}   # develop から見たローカルマシンの ssh 先
+IMAGE=${SB_IMAGE:-shared-browser-x:local}
+CONTAINER=${SB_CONTAINER:-shared-browser-x}
+
+STATE=$HOME/.local/state/shared-browser
+PROFILE=$STATE/profile          # ⚠ /tmp は tmpfs なのでプロファイルを置かない
+LOG=$STATE/chrome.log
+PIDFILE=$STATE/chrome.pid
+ENV_FILE=${SB_ENV_FILE:-$HOME/.config/shared-browser/env}
+
+# ⚠ systemd --user の unit も対話 shell も docker グループを持たない
+#   (user manager の起動が group 付与より前)。sg で補う。
+#   さらに ⚠ sg の -c はログインシェル (zsh) で解釈されるので、
+#   `*` などがグロブに食われないよう bash に渡し直す。
+docker_() {
+	local cmd
+	printf -v cmd '%q ' docker "$@"
+	sg docker -c "bash -c $(printf '%q' "$cmd")"
+}
+
+log() { printf '%s\n' "$*" >&2; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+load_password() {
+	if [ -f "$ENV_FILE" ]; then
+		# shellcheck disable=SC1090
+		. "$ENV_FILE"
+	fi
+	if [ -z "${VNC_PASSWORD:-}" ]; then
+		mkdir -p "$(dirname "$ENV_FILE")"
+		# ⚠ `tr </dev/urandom | head -c N` は上流が SIGPIPE で死に pipefail に引っかかる。
+		#   先に有限バイトを読んでから加工する。
+		VNC_PASSWORD=$(head -c 24 /dev/urandom | base64 | LC_ALL=C tr -dc 'a-zA-Z0-9')
+		VNC_PASSWORD=${VNC_PASSWORD:0:16}
+		umask 077
+		printf 'VNC_PASSWORD=%s\n' "$VNC_PASSWORD" >"$ENV_FILE"
+		log "VNC パスワードを生成して $ENV_FILE に保存した"
+	fi
+}
+
+container_running() {
+	[ "$(docker_ inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" = true ]
+}
+
+chrome_running() {
+	[ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+}
+
+tunnel_pid() {
+	# ⚠ pgrep -f は自分自身にも一致するので、ssh の実行ファイル名で絞る
+	pgrep -x ssh -a 2>/dev/null | awk -v pat="-R $NOVNC_PORT:127.0.0.1:$NOVNC_PORT" \
+		'index($0, pat) { p = $1 } END { if (p) print p }'
+}
+
+viewer_url() {
+	printf 'http://localhost:%s/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=%s\n' \
+		"$NOVNC_PORT" "${VNC_PASSWORD:-}"
+}
+
+cmd_up() {
+	load_password
+	mkdir -p "$STATE" "$PROFILE" /tmp/.X11-unix
+	chmod 1777 /tmp/.X11-unix 2>/dev/null || true
+
+	if ! docker_ image inspect "$IMAGE" >/dev/null 2>&1; then
+		log "イメージ $IMAGE をビルドする"
+		docker_ build -q -t "$IMAGE" "$HERE/docker" >/dev/null
+	fi
+
+	if container_running; then
+		log "X+VNC コンテナは起動済み"
+	else
+		docker_ rm -f "$CONTAINER" >/dev/null 2>&1 || true
+		# --ipc=host は X の MIT-SHM をホストの Chrome と共有させるため
+		docker_ run -d --name "$CONTAINER" --ipc=host \
+			-v /tmp/.X11-unix:/tmp/.X11-unix \
+			-e "DISP=$DISPLAY_NUM" -e "GEOM=$GEOMETRY" -e "VNC_PASSWORD=$VNC_PASSWORD" \
+			-p "127.0.0.1:$NOVNC_PORT:6080" "$IMAGE" >/dev/null
+		local i
+		for i in $(seq 1 40); do
+			curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$NOVNC_PORT/vnc.html" 2>/dev/null && break
+			sleep 1
+		done
+		log "X+VNC コンテナを起動した (noVNC: 127.0.0.1:$NOVNC_PORT)"
+	fi
+
+	if chrome_running; then
+		log "Chrome は起動済み (pid $(cat "$PIDFILE"))"
+	else
+		# setsid で親から切り離す。落とすときは PIDFILE を使う
+		DISPLAY=$DISPLAY_NUM setsid nohup google-chrome \
+			--user-data-dir="$PROFILE" \
+			--remote-debugging-port="$CDP_PORT" \
+			--no-first-run --no-default-browser-check \
+			--window-position=0,0 --window-size="${GEOMETRY%%x*},$(x=${GEOMETRY#*x}; echo "${x%%x*}")" \
+			about:blank >>"$LOG" 2>&1 &
+		echo $! >"$PIDFILE"
+		local i
+		for i in $(seq 1 40); do
+			curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$CDP_PORT/json/version" 2>/dev/null && break
+			sleep 1
+		done
+		log "Chrome を headful で起動した (CDP: 127.0.0.1:$CDP_PORT)"
+	fi
+
+	cmd_tunnel
+	log ""
+	log "エージェント側: playwright-mcp --cdp-endpoint http://127.0.0.1:$CDP_PORT"
+	log "人間側  : $(viewer_url)"
+}
+
+cmd_tunnel() {
+	load_password
+	if [ -n "$(tunnel_pid)" ]; then
+		log "リバーストンネルは張られている ($CLIENT_HOST)"
+		return
+	fi
+	if ssh -f -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
+		-R "$NOVNC_PORT:127.0.0.1:$NOVNC_PORT" "$CLIENT_HOST" 2>/dev/null; then
+		log "リバーストンネルを張った: $CLIENT_HOST の localhost:$NOVNC_PORT → develop"
+	else
+		log "warn: $CLIENT_HOST へのトンネルを張れなかった (SSH LocalForward で代替できる)"
+	fi
+}
+
+# ローカルマシン側の既定ブラウザで noVNC を開く
+cmd_open() {
+	load_password
+	cmd_tunnel
+	local url; url=$(viewer_url)
+	ssh -o BatchMode=yes "$CLIENT_HOST" \
+		"powershell -NoProfile -Command \"Start-Process '$url'\"" >/dev/null 2>&1 \
+		&& log "$CLIENT_HOST の既定ブラウザで開いた" \
+		|| die "$CLIENT_HOST でブラウザを開けなかった"
+}
+
+cmd_down() {
+	if chrome_running; then
+		kill "$(cat "$PIDFILE")" 2>/dev/null || true
+		log "Chrome を停止した"
+	fi
+	rm -f "$PIDFILE"
+	docker_ rm -f "$CONTAINER" >/dev/null 2>&1 && log "X+VNC コンテナを削除した" || true
+	local tp; tp=$(tunnel_pid)
+	[ -n "$tp" ] && kill "$tp" 2>/dev/null && log "リバーストンネルを切った"
+	return 0
+}
+
+cmd_status() {
+	load_password
+	printf 'X+VNC コンテナ : %s\n' "$(container_running && echo running || echo stopped)"
+	printf 'Chrome (headful): %s\n' "$(chrome_running && echo "running (pid $(cat "$PIDFILE"))" || echo stopped)"
+	local ver; ver=$(curl -fsS --max-time 2 "http://127.0.0.1:$CDP_PORT/json/version" 2>/dev/null | sed -n 's/.*"Browser": "\(.*\)",/\1/p')
+	printf 'CDP             : %s\n' "${ver:--}"
+	local tp; tp=$(tunnel_pid)
+	printf '%s へのトンネル : %s\n' "$CLIENT_HOST" "${tp:-none}"
+	printf '閲覧 URL        : %s\n' "$(viewer_url)"
+	if container_running; then
+		printf '開いているタブ  :\n'
+		curl -fsS --max-time 2 "http://127.0.0.1:$CDP_PORT/json/list" 2>/dev/null \
+			| sed -n 's/^   "url": "\(.*\)",$/  - \1/p' | grep -v '^  - chrome-extension' || true
+	fi
+}
+
+case "${1:-status}" in
+	up)     cmd_up ;;
+	down)   cmd_down ;;
+	open)   cmd_open ;;
+	tunnel) cmd_tunnel ;;
+	status) cmd_status ;;
+	url)    load_password; viewer_url ;;
+	*) die "usage: shared-browser {up|down|open|tunnel|status|url}" ;;
+esac

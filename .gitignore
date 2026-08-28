@@ -26,6 +26,7 @@ zsh/env.zsh.backup
 .config/dns-dangling-monitor/env
 .config/discord-notify/
 .config/resource-audit/
+.config/shared-browser/
 .config/tldv-ingest/
 .config/systemd/user/openclaw-gateway.service
 .config/cra_anthropic_key
