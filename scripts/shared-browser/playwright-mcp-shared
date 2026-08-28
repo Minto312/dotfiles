@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# playwright-mcp-shared — このセッション専用の共有ブラウザに繋ぐ Playwright MCP
+#
+# ~/.claude.json の mcpServers.playwright.command をこれに差し替えて使う。
+# `shared-browser port` は **枠を予約するだけで Chrome を起こさない**ので、
+# ブラウザを使わないセッションに Chrome がぶら下がることはない。
+#
+# ブラウザが起きていない状態でツールを呼ぶと ECONNREFUSED で失敗する。
+# そのときは `shared-browser up` してから呼び直せばよい (エラーは明示的)。
+#
+# ⚠ stdout は JSON-RPC の通り道なので、ここから余計な出力を混ぜない。
+set -euo pipefail
+HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+port=$("$HERE/shared-browser" port 2>/dev/null | tr -cd '0-9') || port=""
+[ -n "$port" ] || port=9222   # 枠を取れなくても素の共有インスタンスには繋げる
+
+exec npx -y @playwright/mcp@latest --cdp-endpoint "http://127.0.0.1:$port" "$@"

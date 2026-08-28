@@ -1,18 +1,26 @@
 #!/usr/bin/env bash
-# shared-browser — 人間とエージェントで 1 つのブラウザを共有する
+# shared-browser — 人間とエージェントで 1 つのブラウザを共有する (セッションごとに 1 インスタンス)
 #
 # 狙いは「人間の手が要るステップ (ログイン・2FA・CAPTCHA) を人間が突破し、
-# 同じセッションのままエージェントに続けさせる」こと。そのために:
+# 同じセッションのままエージェントに続けさせる」こと。
 #
-#   Xvfb :99 ← google-chrome (headful, 常駐, プロファイル固定)
-#     │                    └─ --remote-debugging-port=9222 (127.0.0.1 のみ)
+#   Xvfb :N ← google-chrome (headful, 常駐, プロファイル固定)
+#     │                    └─ --remote-debugging-port=<cdp> (127.0.0.1 のみ)
 #     │                          ▲ Playwright MCP が --cdp-endpoint でアタッチ
-#     └─ x11vnc → websockify/noVNC → 127.0.0.1:5063
-#                    └─ ssh -R でローカルマシン (lenovo) の localhost へ通す
+#     └─ x11vnc → websockify/noVNC → 127.0.0.1:<novnc> → lenovo へ ssh -R
 #
 # ブラウザは**ホスト**で動かし、X と VNC だけをコンテナに閉じ込める。
 # こうするとダウンロード先・フォント・upload-dnd がホストのまま効く。
 # (ホストに xvfb/x11vnc を入れるには sudo が要るがパスワード必須のため)
+#
+# **Claude Code のセッションごとに 1 インスタンス**を割り当てる。鍵は
+# CLAUDE_CODE_SESSION_ID (stdio MCP のサブプロセスにも渡る)。`port` は
+# **枠を予約するだけで起動しない**ので、ブラウザを使わないセッションに
+# Chrome がぶら下がることはない。
+#
+# 🔴 並列で使うと孤児が増えるので `gc` が要る。レジストリに CLAUDE_PID を
+#    控えてあり、その kill -0 で判定する (他プロセスの /proc/<pid>/environ は
+#    読めないことを実測済み → dev/claude-code.md)。
 #
 # 常駐サービスにはしない。必要になったときに up し、終わったら down する。
 # 背景と実測は machine/dev/shared-browser/README.md
@@ -20,34 +28,40 @@ set -euo pipefail
 
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-DISPLAY_NUM=${SB_DISPLAY:-:99}
 GEOMETRY=${SB_GEOMETRY:-1600x900x24}
-NOVNC_PORT=${SB_NOVNC_PORT:-5063}   # ⚠ 5060/5061 はブラウザが SIP 用に拒否する
-CDP_PORT=${SB_CDP_PORT:-9222}
-CLIENT_HOST=${SB_CLIENT_HOST:-lenovo}   # develop から見たローカルマシンの ssh 先
+CLIENT_HOST=${SB_CLIENT_HOST:-lenovo}
 IMAGE=${SB_IMAGE:-shared-browser-x:local}
-CONTAINER=${SB_CONTAINER:-shared-browser-x}
+TUNNEL=${SB_TUNNEL:-$HERE/../lenovo-tunnel/lenovo-tunnel}
+
+# スロット N (0..MAX-1) → display :(99+N) / noVNC 5063+N / CDP 9222+N
+# ⚠ 5060/5061 はブラウザが SIP 用に拒否するので 5063 から始める
+SLOT_MAX=${SB_SLOT_MAX:-20}
+DISPLAY_BASE=99
+NOVNC_BASE=5063
+CDP_BASE=9222
 
 STATE=$HOME/.local/state/shared-browser
-PROFILE=$STATE/profile          # ⚠ /tmp は tmpfs なのでプロファイルを置かない
-LOG=$STATE/chrome.log
-PIDFILE=$STATE/chrome.pid
+REGISTRY=$STATE/registry           # key <TAB> slot <TAB> claude_pid <TAB> created
+LOCK=$STATE/registry.lock
 ENV_FILE=${SB_ENV_FILE:-$HOME/.config/shared-browser/env}
-# トンネルは汎用スクリプトに委ねる (衝突検出と事後検証を持っているため)
-TUNNEL=${SB_TUNNEL:-$HERE/../lenovo-tunnel/lenovo-tunnel}
+
+log() { printf '%s\n' "$*" >&2; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 # ⚠ systemd --user の unit も対話 shell も docker グループを持たない
 #   (user manager の起動が group 付与より前)。sg で補う。
-#   さらに ⚠ sg の -c はログインシェル (zsh) で解釈されるので、
-#   `*` などがグロブに食われないよう bash に渡し直す。
+#   さらに ⚠ sg の -c はログインシェル (zsh) で解釈されるので bash に渡し直す。
 docker_() {
 	local cmd
 	printf -v cmd '%q ' docker "$@"
 	sg docker -c "bash -c $(printf '%q' "$cmd")"
 }
 
-log() { printf '%s\n' "$*" >&2; }
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+slot_display() { printf ':%s' "$((DISPLAY_BASE + $1))"; }
+slot_novnc()   { printf '%s'  "$((NOVNC_BASE + $1))"; }
+slot_cdp()     { printf '%s'  "$((CDP_BASE + $1))"; }
+slot_profile() { printf '%s'  "$STATE/profile-$1"; }
+slot_container(){ printf '%s' "shared-browser-x-$1"; }
 
 load_password() {
 	if [ -f "$ENV_FILE" ]; then
@@ -66,123 +80,239 @@ load_password() {
 	fi
 }
 
+default_key() {
+	printf '%s' "${SB_KEY:-${CLAUDE_CODE_SESSION_ID:-default}}"
+}
+
+registry_get() {   # key → slot (無ければ空)
+	[ -f "$REGISTRY" ] || return 0
+	awk -F'\t' -v k="$1" '$1 == k { s = $2 } END { if (s != "") print s }' "$REGISTRY"
+}
+
+# key に slot を割り当てる (既にあればそれを返す)。起動はしない
+registry_assign() {
+	local key=$1 slot
+	mkdir -p "$STATE"
+	exec 9>"$LOCK"
+	flock 9
+	slot=$(registry_get "$key")
+	if [ -z "$slot" ]; then
+		local used i
+		used=$( [ -f "$REGISTRY" ] && cut -f2 "$REGISTRY" || true )
+		for ((i = 0; i < SLOT_MAX; i++)); do
+			printf '%s\n' "$used" | grep -qx "$i" && continue
+			# develop 側で既に埋まっているポートは避ける
+			ss -ltnH "sport = :$(slot_novnc "$i")" 2>/dev/null | grep -q . && continue
+			ss -ltnH "sport = :$(slot_cdp "$i")"   2>/dev/null | grep -q . && continue
+			slot=$i; break
+		done
+		[ -n "$slot" ] || { flock -u 9; die "空きスロットが無い (SLOT_MAX=$SLOT_MAX)"; }
+		printf '%s\t%s\t%s\t%s\n' "$key" "$slot" "${CLAUDE_PID:-}" "$(date -Is)" >>"$REGISTRY"
+	fi
+	flock -u 9
+	printf '%s' "$slot"
+}
+
+registry_drop() {
+	[ -f "$REGISTRY" ] || return 0
+	exec 9>"$LOCK"; flock 9
+	local tmp; tmp=$(mktemp)
+	awk -F'\t' -v k="$1" '$1 != k' "$REGISTRY" >"$tmp" && mv "$tmp" "$REGISTRY"
+	flock -u 9
+}
+
 container_running() {
-	[ "$(docker_ inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)" = true ]
+	[ "$(docker_ inspect -f '{{.State.Running}}' "$(slot_container "$1")" 2>/dev/null || echo false)" = true ]
 }
 
-chrome_running() {
-	[ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
+chrome_pid() {   # slot → pid (無ければ空)
+	ps -eo pid,args | awk -v p="--user-data-dir=$(slot_profile "$1") " \
+		'index($0, p) && $0 !~ /--type=/ { print $1; exit }'
 }
 
-# lenovo 側で実際に割り当たっているポート (衝突時に振り替わることがある)
-effective_lport() {
-	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" list 2>/dev/null \
-		| awk -v d=":$NOVNC_PORT" '$3 == d { sub(/^:/, "", $2); p = $2 } END { if (p) print p }'
+ensure_image() {
+	docker_ image inspect "$IMAGE" >/dev/null 2>&1 && return 0
+	log "イメージ $IMAGE をビルドする"
+	docker_ build -q -t "$IMAGE" "$HERE/docker" >/dev/null
 }
 
-viewer_url() {
-	local lp; lp=$(effective_lport)
-	printf 'http://localhost:%s/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=%s\n' \
-		"${lp:-$NOVNC_PORT}" "${VNC_PASSWORD:-}"
+cmd_port() {   # 枠を予約して CDP ポートだけ返す (起動しない)
+	slot_cdp "$(registry_assign "$(default_key)")"
+	printf '\n'
 }
 
 cmd_up() {
+	local key; key=$(default_key)
+	local slot; slot=$(registry_assign "$key")
+	local disp novnc cdp profile
+	disp=$(slot_display "$slot"); novnc=$(slot_novnc "$slot")
+	cdp=$(slot_cdp "$slot");      profile=$(slot_profile "$slot")
+
 	load_password
-	mkdir -p "$STATE" "$PROFILE" /tmp/.X11-unix
+	ensure_image
+	mkdir -p "$profile" /tmp/.X11-unix
 	chmod 1777 /tmp/.X11-unix 2>/dev/null || true
 
-	if ! docker_ image inspect "$IMAGE" >/dev/null 2>&1; then
-		log "イメージ $IMAGE をビルドする"
-		docker_ build -q -t "$IMAGE" "$HERE/docker" >/dev/null
-	fi
-
-	if container_running; then
-		log "X+VNC コンテナは起動済み"
+	if container_running "$slot"; then
+		log "X+VNC コンテナは起動済み (slot $slot, $disp)"
 	else
-		docker_ rm -f "$CONTAINER" >/dev/null 2>&1 || true
+		docker_ rm -f "$(slot_container "$slot")" >/dev/null 2>&1 || true
 		# --ipc=host は X の MIT-SHM をホストの Chrome と共有させるため
-		docker_ run -d --name "$CONTAINER" --ipc=host \
+		docker_ run -d --name "$(slot_container "$slot")" --ipc=host \
 			-v /tmp/.X11-unix:/tmp/.X11-unix \
-			-e "DISP=$DISPLAY_NUM" -e "GEOM=$GEOMETRY" -e "VNC_PASSWORD=$VNC_PASSWORD" \
-			-p "127.0.0.1:$NOVNC_PORT:6080" "$IMAGE" >/dev/null
+			-e "DISP=$disp" -e "GEOM=$GEOMETRY" -e "VNC_PASSWORD=$VNC_PASSWORD" \
+			-p "127.0.0.1:$novnc:6080" "$IMAGE" >/dev/null
 		local i
 		for i in $(seq 1 40); do
-			curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$NOVNC_PORT/vnc.html" 2>/dev/null && break
+			curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$novnc/vnc.html" 2>/dev/null && break
 			sleep 1
 		done
-		log "X+VNC コンテナを起動した (noVNC: 127.0.0.1:$NOVNC_PORT)"
+		log "X+VNC コンテナを起動した (slot $slot, $disp, noVNC 127.0.0.1:$novnc)"
 	fi
 
-	if chrome_running; then
-		log "Chrome は起動済み (pid $(cat "$PIDFILE"))"
+	if [ -n "$(chrome_pid "$slot")" ]; then
+		log "Chrome は起動済み (pid $(chrome_pid "$slot"))"
 	else
-		# setsid で親から切り離す。落とすときは PIDFILE を使う
-		DISPLAY=$DISPLAY_NUM setsid nohup google-chrome \
-			--user-data-dir="$PROFILE" \
-			--remote-debugging-port="$CDP_PORT" \
+		# setsid で親から切り離す。落とすときは profile でプロセスを引く
+		DISPLAY=$disp setsid nohup google-chrome \
+			--user-data-dir="$profile" \
+			--remote-debugging-port="$cdp" \
 			--no-first-run --no-default-browser-check \
-			--window-position=0,0 --window-size="${GEOMETRY%%x*},$(x=${GEOMETRY#*x}; echo "${x%%x*}")" \
-			about:blank >>"$LOG" 2>&1 &
-		echo $! >"$PIDFILE"
+			--window-position=0,0 \
+			--window-size="${GEOMETRY%%x*},$(x=${GEOMETRY#*x}; echo "${x%%x*}")" \
+			about:blank >>"$STATE/chrome-$slot.log" 2>&1 &
 		local i
 		for i in $(seq 1 40); do
-			curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$CDP_PORT/json/version" 2>/dev/null && break
+			curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$cdp/json/version" 2>/dev/null && break
 			sleep 1
 		done
-		log "Chrome を headful で起動した (CDP: 127.0.0.1:$CDP_PORT)"
+		log "Chrome を headful で起動した (CDP 127.0.0.1:$cdp)"
 	fi
 
-	cmd_tunnel
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" up "$novnc" \
+		|| log "warn: $CLIENT_HOST へのトンネルを張れなかった"
 	log ""
-	log "エージェント側: playwright-mcp --cdp-endpoint http://127.0.0.1:$CDP_PORT"
-	log "人間側  : $(viewer_url)"
+	log "エージェント側: --cdp-endpoint http://127.0.0.1:$cdp"
+	log "人間側  : $(viewer_url "$slot")"
 }
 
-cmd_tunnel() {
-	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" up "$NOVNC_PORT" \
-		|| log "warn: $CLIENT_HOST へのトンネルを張れなかった (SSH LocalForward で代替できる)"
+effective_lport() {   # slot → lenovo 側で実際に割り当たっているポート
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" list 2>/dev/null \
+		| awk -v d=":$(slot_novnc "$1")" '$3 == d { sub(/^:/, "", $2); p = $2 } END { if (p) print p }'
 }
 
-# ローカルマシン側の既定ブラウザで noVNC を開く
+viewer_url() {
+	local lp; lp=$(effective_lport "$1")
+	printf 'http://localhost:%s/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=%s' \
+		"${lp:-$(slot_novnc "$1")}" "${VNC_PASSWORD:-}"
+}
+
 cmd_open() {
+	local key; key=$(default_key)
+	local slot; slot=$(registry_get "$key")
+	[ -n "$slot" ] || die "このセッションのインスタンスはまだ無い (先に up)"
 	load_password
-	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" open "$NOVNC_PORT" \
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" open "$(slot_novnc "$slot")" \
 		"/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=$VNC_PASSWORD"
 }
 
-cmd_down() {
-	if chrome_running; then
-		kill "$(cat "$PIDFILE")" 2>/dev/null || true
-		log "Chrome を停止した"
-	fi
-	rm -f "$PIDFILE"
-	docker_ rm -f "$CONTAINER" >/dev/null 2>&1 && log "X+VNC コンテナを削除した" || true
-	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" down "$NOVNC_PORT" 2>/dev/null || true
+down_slot() {
+	local slot=$1 pid
+	pid=$(chrome_pid "$slot")
+	[ -n "$pid" ] && kill "$pid" 2>/dev/null && log "  Chrome を停止 (slot $slot, pid $pid)"
+	docker_ rm -f "$(slot_container "$slot")" >/dev/null 2>&1 \
+		&& log "  コンテナを削除 (slot $slot)" || true
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" down "$(slot_novnc "$slot")" >/dev/null 2>&1 || true
 	return 0
 }
 
-cmd_status() {
+cmd_down() {
+	if [ "${1:-}" = "--all" ]; then
+		[ -f "$REGISTRY" ] || { log "インスタンスは無い"; return 0; }
+		local key slot rest
+		while IFS=$'\t' read -r key slot rest; do
+			log "$key (slot $slot)"
+			down_slot "$slot"
+			registry_drop "$key"
+		done < <(cat "$REGISTRY")
+		return 0
+	fi
+	local key; key=${1:-$(default_key)}
+	local slot; slot=$(registry_get "$key")
+	[ -n "$slot" ] || { log "このセッションのインスタンスは無い"; return 0; }
+	log "$key (slot $slot)"
+	down_slot "$slot"
+	registry_drop "$key"
+}
+
+# 🔴 並列運用の生命線。死んだセッションのインスタンスを回収する
+cmd_gc() {
+	[ -f "$REGISTRY" ] || { log "インスタンスは無い"; return 0; }
+	local key slot pid created n=0
+	while IFS=$'\t' read -r key slot pid created; do
+		[ -n "$key" ] || continue
+		if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+			continue   # セッションが生きている
+		fi
+		if [ -z "$pid" ]; then
+			log "skip $key (slot $slot): 手動作成なので回収しない"
+			continue
+		fi
+		log "回収 $key (slot $slot, claude pid $pid は不在)"
+		down_slot "$slot"
+		registry_drop "$key"
+		n=$((n + 1))
+	done < <(cat "$REGISTRY")
+	log "$n 件回収した"
+}
+
+cmd_list() {
+	[ -f "$REGISTRY" ] && [ -s "$REGISTRY" ] || { log "インスタンスは無い"; return 0; }
 	load_password
-	printf 'X+VNC コンテナ : %s\n' "$(container_running && echo running || echo stopped)"
-	printf 'Chrome (headful): %s\n' "$(chrome_running && echo "running (pid $(cat "$PIDFILE"))" || echo stopped)"
-	local ver; ver=$(curl -fsS --max-time 2 "http://127.0.0.1:$CDP_PORT/json/version" 2>/dev/null | sed -n 's/.*"Browser": "\(.*\)",/\1/p')
-	printf 'CDP             : %s\n' "${ver:--}"
-	local lp; lp=$(effective_lport)
+	printf '%-5s %-7s %-7s %-6s %-9s %-9s %s\n' SLOT DISPLAY noVNC CDP CHROME SESSION KEY
+	local key slot pid created
+	while IFS=$'\t' read -r key slot pid created; do
+		[ -n "$key" ] || continue
+		local c s
+		c=$( [ -n "$(chrome_pid "$slot")" ] && echo running || echo '-' )
+		if [ -z "$pid" ]; then s=manual
+		elif kill -0 "$pid" 2>/dev/null; then s=alive
+		else s=DEAD; fi
+		printf '%-5s %-7s %-7s %-6s %-9s %-9s %s\n' \
+			"$slot" "$(slot_display "$slot")" "$(slot_novnc "$slot")" "$(slot_cdp "$slot")" \
+			"$c" "$s" "${key:0:20}"
+	done < <(cat "$REGISTRY")
+}
+
+cmd_status() {
+	local key; key=$(default_key)
+	local slot; slot=$(registry_get "$key")
+	[ -n "$slot" ] || { log "このセッション ($key) のインスタンスはまだ無い"; return 0; }
+	load_password
+	local cdp; cdp=$(slot_cdp "$slot")
+	printf 'キー            : %s\n' "$key"
+	printf 'スロット        : %s (%s)\n' "$slot" "$(slot_display "$slot")"
+	printf 'X+VNC コンテナ  : %s\n' "$(container_running "$slot" && echo running || echo stopped)"
+	printf 'Chrome (headful): %s\n' "$( [ -n "$(chrome_pid "$slot")" ] && echo "running (pid $(chrome_pid "$slot"))" || echo stopped)"
+	local ver; ver=$(curl -fs --max-time 2 "http://127.0.0.1:$cdp/json/version" 2>/dev/null | sed -n 's/.*"Browser": "\(.*\)",/\1/p')
+	printf 'CDP             : %s (127.0.0.1:%s)\n' "${ver:--}" "$cdp"
+	local lp; lp=$(effective_lport "$slot")
 	printf '%s へのトンネル : %s\n' "$CLIENT_HOST" "${lp:+localhost:}${lp:-none}"
-	printf '閲覧 URL        : %s\n' "$(viewer_url)"
-	if container_running; then
+	printf '閲覧 URL        : %s\n' "$(viewer_url "$slot")"
+	if container_running "$slot"; then
 		printf '開いているタブ  :\n'
-		curl -fsS --max-time 2 "http://127.0.0.1:$CDP_PORT/json/list" 2>/dev/null \
+		curl -fs --max-time 2 "http://127.0.0.1:$cdp/json/list" 2>/dev/null \
 			| sed -n 's/^   "url": "\(.*\)",$/  - \1/p' | grep -v '^  - chrome-extension' || true
 	fi
 }
 
 case "${1:-status}" in
+	port)   cmd_port ;;
 	up)     cmd_up ;;
-	down)   cmd_down ;;
+	down)   shift; cmd_down "$@" ;;
 	open)   cmd_open ;;
-	tunnel) cmd_tunnel ;;
+	gc)     cmd_gc ;;
+	list)   cmd_list ;;
 	status) cmd_status ;;
-	url)    load_password; viewer_url ;;
-	*) die "usage: shared-browser {up|down|open|tunnel|status|url}" ;;
+	*) die "usage: shared-browser {port|up|down [--all|<key>]|open|gc|list|status}" ;;
 esac

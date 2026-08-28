@@ -141,10 +141,12 @@ cmd_down() {
 	[ -n "$rows" ] || { log "張られているトンネルは無い"; return 0; }
 
 	local pid lp dp
+	local closed=()
 	if [ "$1" = "--all" ]; then
 		while read -r pid lp dp; do
-			kill "$pid" 2>/dev/null && log "切断: localhost:$lp → 127.0.0.1:$dp (pid $pid)"
+			kill "$pid" 2>/dev/null && log "切断: localhost:$lp → 127.0.0.1:$dp (pid $pid)" && closed+=("$lp")
 		done <<<"$rows"
+		wait_closed "${closed[@]}"
 		return 0
 	fi
 	local want
@@ -152,11 +154,31 @@ cmd_down() {
 		local hit=0
 		while read -r pid lp dp; do
 			if [ "$lp" = "$want" ] || [ "$dp" = "$want" ]; then
-				kill "$pid" 2>/dev/null && log "切断: localhost:$lp → 127.0.0.1:$dp (pid $pid)" && hit=1
+				kill "$pid" 2>/dev/null && log "切断: localhost:$lp → 127.0.0.1:$dp (pid $pid)" \
+					&& hit=1 && closed+=("$lp")
 			fi
 		done <<<"$rows"
 		[ "$hit" = 1 ] || log "warn: ポート $want のトンネルは見つからない"
 	done
+	wait_closed "${closed[@]}"
+}
+
+# ⚠ ssh を kill しても lenovo 側の listen はすぐには消えない。
+#   残ったまま次の up をすると「使用中」と誤判定して無用に振り替わる (実測)。
+wait_closed() {
+	[ $# -gt 0 ] || return 0
+	local i p left
+	for i in 1 2 3; do
+		left=""
+		local remote; remote=$(remote_listen_ports)
+		for p in "$@"; do
+			printf '%s\n' "$remote" | grep -qx "$p" && left="$left $p"
+		done
+		[ -z "$left" ] && return 0
+		sleep 2
+	done
+	[ -n "$left" ] && log "note: $CLIENT_HOST 側の listen が残っている:$left (次の up で振り替わることがある)"
+	return 0
 }
 
 # lenovo の既定ブラウザで開く。トンネルが無ければ張る
