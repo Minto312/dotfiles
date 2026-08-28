@@ -1,0 +1,24 @@
+[Unit]
+Description=gha-runner-monitor: GitHub Actions self-hosted runner (ARC) の死活を測定して OTLP に送る
+Documentation=file://%h/workspace/machine/services/gha-runner/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# ⚠ systemd --user の PATH には ~/.local/bin が入っていない。kubectl はそこにある。
+Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# observability の契約 (docs/instrumentation.md)。アプリが知ってよいのは OTLP だけ。
+Environment=OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+Environment=OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+Environment=OTEL_SERVICE_NAME=gha-runner-monitor
+# kubeconfig は dotfiles (public) に置けないので実体はホーム配下を参照する。
+Environment=GHA_RUNNER_KUBECONFIG=%h/.talos/gha-runner/kubeconfig
+ExecStart=%h/dotfiles/scripts/gha-runner-monitor/check.sh
+TimeoutStartSec=2min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target
