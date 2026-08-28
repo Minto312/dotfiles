@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+# lenovo-tunnel — develop の loopback ポートをローカルマシン (lenovo) の localhost へ通す
+#
+# develop 上で立てた開発サーバ・ビューア・noVNC などを手元のブラウザで見せるための
+# SSH リバーストンネル。**develop 側から張るのでローカルマシン側の設定は要らない。**
+#
+#   develop 127.0.0.1:<dport>  ──ssh -R──>  lenovo localhost:<lport>
+#
+# tailnet に公開する (tailscale serve) のとは使い分ける:
+#   - 恒常的に見せるもの (grafana, feedscope, home) → Tailscale Services
+#   - その場かぎりのもの (dev server, ビューア, 検証) → このトンネル
+#
+# 🔴 Windows の sshd はリモート forward の bind 失敗を報告しない。
+#    `ExitOnForwardFailure` を付けても、使用中のポートを要求して rc=0 が返る
+#    (実測: lenovo の 22 番を要求しても成功扱いになった)。
+#    そのため **張る前に lenovo の listen 一覧を見て衝突を避け、張った後に
+#    listen に現れたかを検証する**。この 2 段構えが無いと、手元のサービスの
+#    ポートを黙って奪いかねない。
+#
+# 詳細は machine/dev/lenovo-tunnel.md
+set -euo pipefail
+
+CLIENT_HOST=${LT_CLIENT_HOST:-lenovo}
+FALLBACK_BASE=${LT_FALLBACK_BASE:-18000}   # 衝突時に探す代替ポートの開始番号
+FALLBACK_TRIES=${LT_FALLBACK_TRIES:-50}
+
+log()  { printf '%s\n' "$*" >&2; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+ssh_() {
+	ssh -o BatchMode=yes -o ConnectTimeout=10 -o ControlPath=none "$CLIENT_HOST" "$@"
+}
+
+# lenovo 側で listen しているポートを改行区切りで返す
+remote_listen_ports() {
+	ssh_ 'powershell -NoProfile -Command "(Get-NetTCPConnection -State Listen | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique) -join \",\""' \
+		2>/dev/null | tr -d '\r' | tr ',' '\n' | grep -E '^[0-9]+$' || true
+}
+
+# develop 側で listen しているポートを改行区切りで返す
+local_listen_ports() {
+	ss -ltnH 2>/dev/null | awk '{ n = split($4, a, ":"); print a[n] }' | sort -u
+}
+
+# 現在張っているトンネルを "pid lport dport" で返す
+current_forwards() {
+	# ⚠ pkill -f は自分自身に一致するので使わない。pgrep -x で ssh に限定する
+	pgrep -x ssh -a 2>/dev/null | awk '
+		{
+			for (i = 1; i <= NF; i++)
+				if ($i == "-R" && (i + 1) <= NF) {
+					n = split($(i + 1), a, ":")
+					if (n == 3) print $1, a[1], a[3]
+				}
+		}' || true
+}
+
+cmd_list() {
+	local rows; rows=$(current_forwards)
+	if [ -z "$rows" ]; then
+		log "張られているトンネルは無い"
+		return 0
+	fi
+	printf '%-8s %-22s %s\n' PID "$CLIENT_HOST の localhost" 'develop の 127.0.0.1'
+	printf '%s\n' "$rows" | while read -r pid lp dp; do
+		printf '%-8s %-22s %s\n' "$pid" ":$lp" ":$dp"
+	done
+}
+
+cmd_up() {
+	[ $# -gt 0 ] || die "usage: lenovo-tunnel up <port>[:<develop側port>] ..."
+
+	local remote_ports local_ports
+	remote_ports=$(remote_listen_ports)
+	[ -n "$remote_ports" ] || die "$CLIENT_HOST の listen 一覧を取得できなかった (ssh は通るか)"
+	local_ports=$(local_listen_ports)
+
+	local existing; existing=$(current_forwards)
+	local results=()
+
+	local spec lp dp
+	for spec in "$@"; do
+		case "$spec" in
+			*:*) lp=${spec%%:*}; dp=${spec#*:} ;;
+			*)   lp=$spec; dp=$spec ;;
+		esac
+		[[ "$lp" =~ ^[0-9]+$ && "$dp" =~ ^[0-9]+$ ]] || die "ポート指定が不正: $spec"
+
+		# develop 側にサービスが居るか (無くても張れるが、まず間違いなく指定ミス)
+		if ! printf '%s\n' "$local_ports" | grep -qx "$dp"; then
+			log "warn: develop の 127.0.0.1:$dp では誰も listen していない"
+		fi
+
+		# 既に同じ転送を張っていれば使い回す
+		if printf '%s\n' "$existing" | awk -v l="$lp" -v d="$dp" '$2 == l && $3 == d { f = 1 } END { exit !f }'; then
+			results+=("$lp $dp reused")
+			continue
+		fi
+
+		# 🔴 lenovo 側で使用中なら別のポートを取る (bind 失敗が報告されないため事前に避ける)
+		if printf '%s\n' "$remote_ports" | grep -qx "$lp"; then
+			local orig=$lp i cand
+			lp=""
+			for ((i = 0; i < FALLBACK_TRIES; i++)); do
+				cand=$((FALLBACK_BASE + i))
+				printf '%s\n' "$remote_ports" | grep -qx "$cand" && continue
+				printf '%s\n' "$existing" | awk -v l="$cand" '$2 == l { f = 1 } END { exit !f }' && continue
+				lp=$cand; break
+			done
+			[ -n "$lp" ] || die "$CLIENT_HOST に空きポートが見つからない"
+			log "note: $CLIENT_HOST の $orig は使用中なので $lp に振り替える"
+		fi
+
+		ssh -f -N -o BatchMode=yes -o ConnectTimeout=10 -o ControlPath=none \
+			-o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+			-R "$lp:127.0.0.1:$dp" "$CLIENT_HOST" 2>/dev/null || true
+		results+=("$lp $dp new")
+		remote_ports=$(printf '%s\n%s\n' "$remote_ports" "$lp")
+	done
+
+	# 事後検証: lenovo の listen に現れたか (rc は当てにならないので実地で見る)
+	local after; after=$(remote_listen_ports)
+	local r lp2 dp2 how ok=0 ng=0
+	for r in "${results[@]}"; do
+		read -r lp2 dp2 how <<<"$r"
+		if printf '%s\n' "$after" | grep -qx "$lp2"; then
+			log "ok   $CLIENT_HOST localhost:$lp2 → develop 127.0.0.1:$dp2 ($how)"
+			ok=$((ok + 1))
+		else
+			log "FAIL $CLIENT_HOST localhost:$lp2 に listen が現れない (develop 127.0.0.1:$dp2)"
+			ng=$((ng + 1))
+		fi
+	done
+	[ "$ng" -eq 0 ] || return 1
+	return 0
+}
+
+cmd_down() {
+	[ $# -gt 0 ] || die "usage: lenovo-tunnel down <port>... | --all"
+	local rows; rows=$(current_forwards)
+	[ -n "$rows" ] || { log "張られているトンネルは無い"; return 0; }
+
+	local pid lp dp
+	if [ "$1" = "--all" ]; then
+		while read -r pid lp dp; do
+			kill "$pid" 2>/dev/null && log "切断: localhost:$lp → 127.0.0.1:$dp (pid $pid)"
+		done <<<"$rows"
+		return 0
+	fi
+	local want
+	for want in "$@"; do
+		local hit=0
+		while read -r pid lp dp; do
+			if [ "$lp" = "$want" ] || [ "$dp" = "$want" ]; then
+				kill "$pid" 2>/dev/null && log "切断: localhost:$lp → 127.0.0.1:$dp (pid $pid)" && hit=1
+			fi
+		done <<<"$rows"
+		[ "$hit" = 1 ] || log "warn: ポート $want のトンネルは見つからない"
+	done
+}
+
+# lenovo の既定ブラウザで開く。トンネルが無ければ張る
+cmd_open() {
+	[ $# -gt 0 ] || die "usage: lenovo-tunnel open <port>[:<develop側port>] [path]"
+	local spec=$1; shift
+	local path=${1:-/}
+	cmd_up "$spec"
+	local lp; lp=${spec%%:*}
+	# 振り替えが起きている場合に備えて、実際に張られている lport を引き直す
+	local dp; case "$spec" in *:*) dp=${spec#*:} ;; *) dp=$spec ;; esac
+	local actual
+	actual=$(current_forwards | awk -v d="$dp" '$3 == d { print $2; exit }')
+	[ -n "$actual" ] && lp=$actual
+	local url="http://localhost:$lp${path}"
+	ssh_ "powershell -NoProfile -Command \"Start-Process '$url'\"" >/dev/null 2>&1 \
+		&& log "$CLIENT_HOST の既定ブラウザで開いた: $url" \
+		|| die "$CLIENT_HOST でブラウザを開けなかった"
+}
+
+case "${1:-list}" in
+	up)   shift; cmd_up "$@" ;;
+	down) shift; cmd_down "$@" ;;
+	open) shift; cmd_open "$@" ;;
+	list) cmd_list ;;
+	*) die "usage: lenovo-tunnel {up <port>...|down <port>...|--all|open <port> [path]|list}" ;;
+esac

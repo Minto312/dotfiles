@@ -33,6 +33,8 @@ PROFILE=$STATE/profile          # ⚠ /tmp は tmpfs なのでプロファイル
 LOG=$STATE/chrome.log
 PIDFILE=$STATE/chrome.pid
 ENV_FILE=${SB_ENV_FILE:-$HOME/.config/shared-browser/env}
+# トンネルは汎用スクリプトに委ねる (衝突検出と事後検証を持っているため)
+TUNNEL=${SB_TUNNEL:-$HERE/../lenovo-tunnel/lenovo-tunnel}
 
 # ⚠ systemd --user の unit も対話 shell も docker グループを持たない
 #   (user manager の起動が group 付与より前)。sg で補う。
@@ -72,15 +74,16 @@ chrome_running() {
 	[ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null
 }
 
-tunnel_pid() {
-	# ⚠ pgrep -f は自分自身にも一致するので、ssh の実行ファイル名で絞る
-	pgrep -x ssh -a 2>/dev/null | awk -v pat="-R $NOVNC_PORT:127.0.0.1:$NOVNC_PORT" \
-		'index($0, pat) { p = $1 } END { if (p) print p }'
+# lenovo 側で実際に割り当たっているポート (衝突時に振り替わることがある)
+effective_lport() {
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" list 2>/dev/null \
+		| awk -v d=":$NOVNC_PORT" '$3 == d { sub(/^:/, "", $2); p = $2 } END { if (p) print p }'
 }
 
 viewer_url() {
+	local lp; lp=$(effective_lport)
 	printf 'http://localhost:%s/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=%s\n' \
-		"$NOVNC_PORT" "${VNC_PASSWORD:-}"
+		"${lp:-$NOVNC_PORT}" "${VNC_PASSWORD:-}"
 }
 
 cmd_up() {
@@ -136,28 +139,15 @@ cmd_up() {
 }
 
 cmd_tunnel() {
-	load_password
-	if [ -n "$(tunnel_pid)" ]; then
-		log "リバーストンネルは張られている ($CLIENT_HOST)"
-		return
-	fi
-	if ssh -f -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
-		-R "$NOVNC_PORT:127.0.0.1:$NOVNC_PORT" "$CLIENT_HOST" 2>/dev/null; then
-		log "リバーストンネルを張った: $CLIENT_HOST の localhost:$NOVNC_PORT → develop"
-	else
-		log "warn: $CLIENT_HOST へのトンネルを張れなかった (SSH LocalForward で代替できる)"
-	fi
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" up "$NOVNC_PORT" \
+		|| log "warn: $CLIENT_HOST へのトンネルを張れなかった (SSH LocalForward で代替できる)"
 }
 
 # ローカルマシン側の既定ブラウザで noVNC を開く
 cmd_open() {
 	load_password
-	cmd_tunnel
-	local url; url=$(viewer_url)
-	ssh -o BatchMode=yes "$CLIENT_HOST" \
-		"powershell -NoProfile -Command \"Start-Process '$url'\"" >/dev/null 2>&1 \
-		&& log "$CLIENT_HOST の既定ブラウザで開いた" \
-		|| die "$CLIENT_HOST でブラウザを開けなかった"
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" open "$NOVNC_PORT" \
+		"/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=$VNC_PASSWORD"
 }
 
 cmd_down() {
@@ -167,8 +157,7 @@ cmd_down() {
 	fi
 	rm -f "$PIDFILE"
 	docker_ rm -f "$CONTAINER" >/dev/null 2>&1 && log "X+VNC コンテナを削除した" || true
-	local tp; tp=$(tunnel_pid)
-	[ -n "$tp" ] && kill "$tp" 2>/dev/null && log "リバーストンネルを切った"
+	LT_CLIENT_HOST=$CLIENT_HOST "$TUNNEL" down "$NOVNC_PORT" 2>/dev/null || true
 	return 0
 }
 
@@ -178,8 +167,8 @@ cmd_status() {
 	printf 'Chrome (headful): %s\n' "$(chrome_running && echo "running (pid $(cat "$PIDFILE"))" || echo stopped)"
 	local ver; ver=$(curl -fsS --max-time 2 "http://127.0.0.1:$CDP_PORT/json/version" 2>/dev/null | sed -n 's/.*"Browser": "\(.*\)",/\1/p')
 	printf 'CDP             : %s\n' "${ver:--}"
-	local tp; tp=$(tunnel_pid)
-	printf '%s へのトンネル : %s\n' "$CLIENT_HOST" "${tp:-none}"
+	local lp; lp=$(effective_lport)
+	printf '%s へのトンネル : %s\n' "$CLIENT_HOST" "${lp:+localhost:}${lp:-none}"
 	printf '閲覧 URL        : %s\n' "$(viewer_url)"
 	if container_running; then
 		printf '開いているタブ  :\n'
