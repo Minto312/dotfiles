@@ -148,11 +148,57 @@ lq_window_label() {
 
 # 1 バケット = 1 レコード。used_ratio は必ず小数表記にして doubleValue に落とす
 # (整数だと intValue になり、VictoriaLogs 側で型が混ざる)。
+# ---------------------------------------------------------------------------
+# resets_at の正規化
+#
+# provider ごとに書式が違う。agy / codex は ISO8601 UTC だが、**claude だけ
+# `Aug 30, 12:20am (UTC)` / `Aug 30, 2pm (UTC)` という人間可読形式で、しかも
+# 年が入っていない**(分が無い場合もある)。epoch に揃えたうえで 2 つ出す:
+#
+#   resets_at    = ISO8601 UTC  … 機械可読。アラートやデバッグ用
+#   resets_label = JST の表示用 … 5h は HH:MM、weekly は MM-DD HH:MM
+#
+# パースできなかったときは生値を resets_at に残す (情報を落とさないため)。
+# ---------------------------------------------------------------------------
+lq_resets_epoch() {
+  local raw="$1" cleaned year epoch now
+  [ -z "$raw" ] && return 1
+  case "$raw" in
+    *T*[Zz])
+      date -u -d "$raw" +%s 2>/dev/null || return 1
+      return 0
+      ;;
+  esac
+  # カンマと括弧を落とすと GNU date が読める ("Aug 30 12:20am UTC")。
+  cleaned="$(printf '%s' "$raw" | tr -d ',()')"
+  year="$(date -u +%Y)"
+  epoch="$(date -u -d "$cleaned $year" +%s 2>/dev/null)" || return 1
+  now="$(date -u +%s)"
+  # 年が無いので、12 月に測って 1 月の reset を見ると去年と解釈されてしまう。
+  # reset は必ず未来なので、過去に落ちたら翌年と読み替える。
+  if [ "$epoch" -lt "$((now - 86400))" ]; then
+    epoch="$(date -u -d "$cleaned $((year + 1))" +%s 2>/dev/null)" || return 1
+  fi
+  printf '%s' "$epoch"
+}
+
 lq_emit_bucket() {
   local provider="$1" bucket="$2" window="$3" used="$4" resets="$5" plan="$6"
-  local used_f remaining_f
+  local used_f remaining_f resets_at resets_label epoch
   used_f="$(printf '%.6f' "$used")"
   remaining_f="$(printf '%.6f' "$(awk -v u="$used" 'BEGIN { printf "%.6f", 1 - u }')")"
+
+  resets_at="$resets"
+  resets_label=""
+  if epoch="$(lq_resets_epoch "$resets")" && [ -n "$epoch" ]; then
+    resets_at="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)"
+    if [ "$window" = "5h" ]; then
+      resets_label="$(TZ=Asia/Tokyo date -d "@$epoch" +%H:%M)"
+    else
+      resets_label="$(TZ=Asia/Tokyo date -d "@$epoch" '+%m-%d %H:%M')"
+    fi
+  fi
+
   lq_add INFO \
     "$(printf '%s %s: %.1f%% used (残 %.1f%%)' "$provider" "$bucket" \
       "$(awk -v u="$used" 'BEGIN { printf "%.4f", u * 100 }')" \
@@ -162,7 +208,8 @@ lq_emit_bucket() {
     "window=$window" \
     "used_ratio=$used_f" \
     "remaining_ratio=$remaining_f" \
-    "resets_at=$resets" \
+    "resets_at=$resets_at" \
+    "resets_label=$resets_label" \
     "plan=$plan" \
     "probe.ok=true"
 }
