@@ -59,11 +59,19 @@ if [ -z "$FILTER_RE" ]; then
   dm_die "domains.txt に apex が 1 件も無い"
 fi
 
+# passive source (subfinder / crt.sh) は同じホストを毎日返すとは限らない。
+# 前回列挙できたホストを候補に混ぜておかないと、列挙が揺れただけで
+# 「消えた → 生えた」が出る (dev.relay で 9 日に 2 回発生。DNS は生きたままだった)。
+# 本当に DNS から消えたものは下の解決チェックで落ちるので gone の検知は保たれる。
+# apex を domains.txt から外したホストは FILTER_RE で除かれるので残り続けない。
+KNOWN="$DM_STATE_DIR/hosts.discovered.txt"
+touch "$KNOWN"
+
 CAND="$DM_RUN_DIR/candidates.txt"
-sort -u "$SUBS_RAW" |
+sort -u "$SUBS_RAW" "$KNOWN" |
   grep -E '^[a-z0-9]([a-z0-9._-]*[a-z0-9])?$' |
   grep -Ei "$FILTER_RE" > "$CAND" || true
-dm_log "候補: $(wc -l < "$CAND") 件"
+dm_log "候補: $(wc -l < "$CAND") 件 (passive 列挙 + 前回既知 $(wc -l < "$KNOWN") 件)"
 
 # ---- 解決できるものだけ残す ----
 ALIVE="$DM_RUN_DIR/discovered.txt"
