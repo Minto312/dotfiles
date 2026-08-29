@@ -1,12 +1,14 @@
 [Unit]
-Description=llm-quota を 15 分ごとに走らせる
+Description=llm-quota を 5 分ごとに走らせる
 Documentation=file://%h/workspace/machine/services/llm-quota.md
 
 [Timer]
 # 3 プロバイダとも「ターンも quota も消費しない」経路なので、測ること自体のコストは
-# プロセス起動ぶんだけ。agy の 5 時間窓の動きを追える程度の粒度にしてある。
-OnCalendar=*:03/15
-RandomizedDelaySec=90
+# プロセス起動ぶんだけ (実測 1 回 10.4 秒・CPU 4 秒)。ダッシュボードで「いまの残り」を
+# 見るのが主用途なので、粒度を 15 分から 5 分に上げた。
+OnCalendar=*:00/5
+# 5 分間隔なので隣の実行と重ならない範囲に収める (15 分間隔のときは 90 秒だった)。
+RandomizedDelaySec=30
 Persistent=true
 Unit=llm-quota.service
 

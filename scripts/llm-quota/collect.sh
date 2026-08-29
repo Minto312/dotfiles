@@ -232,8 +232,15 @@ probe_claude() {
     return 1
   fi
   # ⚠ --no-session-persistence が無いと 1 回ごとに ~3.3KB のセッション JSONL が
-  #   ~/.claude/projects/ に残る (15 分間隔なら 96 個/日)。print モード限定のフラグ。
-  out="$(timeout 120 "$bin" -p "/usage" --output-format json --no-session-persistence 2>/dev/null)" || true
+  #   ~/.claude/projects/ に残る (5 分間隔なら 288 個/日)。print モード限定のフラグ。
+  # 🔴 --strict-mcp-config が無いと ~/.claude.json の MCP サーバを全部起動する。
+  #   playwright は shared-browser のラッパーなので、測定 1 回ごとにブラウザスロットを
+  #   1 つ予約して返さない (2026-08-29 に実測。20 スロットが 5 分間隔なら 100 分で枯渇し、
+  #   人間のセッションが `空きスロットが無い` でブラウザを使えなくなる)。
+  #   /usage に MCP は要らない。所要も 2.7 秒 → 1.7 秒に縮む (実測 3 回平均)。
+  # ⚠ </dev/null が無いと claude は stdin を 3 秒待ってから
+  #   `no stdin data received in 3s` を stderr に出して進む。丸ごと無駄なので塞ぐ。
+  out="$(timeout 120 "$bin" -p "/usage" --output-format json --no-session-persistence --strict-mcp-config </dev/null 2>/dev/null)" || true
   text="$(printf '%s' "$out" | jq -r '.result // empty' 2>/dev/null)" || true
   if [ -z "$text" ]; then
     lq_emit_probe_failure claude "empty or unparsable response"
