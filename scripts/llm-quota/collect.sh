@@ -184,7 +184,7 @@ lq_resets_epoch() {
 
 lq_emit_bucket() {
   local provider="$1" bucket="$2" window="$3" used="$4" resets="$5" plan="$6"
-  local used_f remaining_f resets_at resets_label epoch
+  local used_f remaining_f resets_at resets_label epoch left_s
   used_f="$(printf '%.6f' "$used")"
   remaining_f="$(printf '%.6f' "$(awk -v u="$used" 'BEGIN { printf "%.6f", 1 - u }')")"
 
@@ -194,6 +194,13 @@ lq_emit_bucket() {
     resets_at="$(date -u -d "@$epoch" +%Y-%m-%dT%H:%M:%SZ)"
     if [ "$window" = "5h" ]; then
       resets_label="$(TZ=Asia/Tokyo date -d "@$epoch" +%H:%M)"
+      # 5h 窓は「あと何時間何分で戻るか」の方が知りたいので併記する。
+      # ⚠ これは**測定時点の**残りなので、画面上は最大 1 測定ぶん (5 分) 古い。
+      #    Grafana 側では現在時刻を使った計算ができないので、ここで出すしかない。
+      left_s=$(( epoch - $(date -u +%s) ))
+      if [ "$left_s" -gt 0 ]; then
+        resets_label="$resets_label (left $(( left_s / 3600 ))h $(printf '%02d' $(( (left_s % 3600) / 60 )))m)"
+      fi
     else
       resets_label="$(TZ=Asia/Tokyo date -d "@$epoch" '+%m-%d %H:%M')"
     fi
