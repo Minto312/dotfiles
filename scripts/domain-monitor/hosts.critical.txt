@@ -24,6 +24,10 @@ sozan.raim-tech.com     web
 # 監視自体は discover.sh が日次で拾うので best-effort (monitor.critical=false) で続く。
 # 常時稼働に戻すときはこの行を復活させる:
 #   dev.relay.raim-tech.com web
+#
+# livekit.dev.relay.raim-tech.com (2026-08-31 出現、LiveKit の WebRTC SFU) も
+# 同じ dev ALB に載っている。2026-09-01 に管理者が「意図した公開」と確認済みだが、
+# dev 環境なので同じ理由でここには入れない (best-effort のまま)。
 
 # where-truck.com は A レコードを持たない (Google Workspace のメール用途)。
 # HTTP を見ると必ず失敗するので dns-only にする。
