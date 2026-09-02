@@ -15,10 +15,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 units=(backup-user.service backup-user.timer restic-maintain.service restic-maintain.timer
-       backup-l3.service backup-l3.timer)
+       backup-l3.service backup-l3.timer backup-heartbeat.service backup-heartbeat.timer)
 
 uninstall() {
-  for u in backup-user.timer restic-maintain.timer backup-l3.timer; do
+  for u in backup-user.timer restic-maintain.timer backup-l3.timer backup-heartbeat.timer; do
     systemctl --user disable --now "$u" 2>/dev/null || true
   done
   for u in "${units[@]}"; do rm -f "$UNIT_DIR/$u"; done
@@ -108,8 +108,32 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
+cat > "$UNIT_DIR/backup-heartbeat.service" <<EOF
+[Unit]
+Description=backup: 週次 heartbeat を Discord へ (沈黙を異常のサインにする)
+Documentation=file://$HOME/workspace/machine/storage/backup-develop.md
+
+[Service]
+Type=oneshot
+ExecStart=$SCRIPT_DIR/heartbeat.sh
+Nice=19
+EOF
+
+cat > "$UNIT_DIR/backup-heartbeat.timer" <<EOF
+[Unit]
+Description=backup heartbeat の週次実行 (月 00:20 UTC = 09:20 JST)
+
+[Timer]
+OnCalendar=Mon *-*-* 00:20:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
 systemctl --user daemon-reload
-systemctl --user enable --now backup-user.timer restic-maintain.timer backup-l3.timer
+systemctl --user enable --now backup-user.timer restic-maintain.timer backup-l3.timer backup-heartbeat.timer
 
 echo "installed:"
-systemctl --user list-timers --all --no-pager backup-user.timer restic-maintain.timer backup-l3.timer
+systemctl --user list-timers --all --no-pager backup-user.timer restic-maintain.timer backup-l3.timer backup-heartbeat.timer
