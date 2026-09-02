@@ -30,8 +30,18 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 GEOMETRY=${SB_GEOMETRY:-1600x900x24}
 CLIENT_HOST=${SB_CLIENT_HOST:-lenovo}
-IMAGE=${SB_IMAGE:-shared-browser-x:local}
 TUNNEL=${SB_TUNNEL:-$HERE/../lenovo-tunnel/lenovo-tunnel}
+
+# イメージのタグは docker/ の内容から決める。
+# ⚠ ensure_image は「そのタグが無ければ建てる」だけなので、固定タグだと
+#   Dockerfile を変えても永久に古いイメージが使われる (= 新しい機能が黙って欠ける)。
+#   内容ハッシュにしておくと変更が自動で新タグになり、**稼働中のコンテナは
+#   古いイメージを掴んだまま生き残る** (docker は参照されているイメージを消さない)。
+IMAGE=${SB_IMAGE:-shared-browser-x:$(cat "$HERE/docker/Dockerfile" "$HERE/docker/entrypoint.sh" | sha256sum | cut -c1-12)}
+
+# type (xdotool) の 1 文字あたりの間隔 [ms]。→ machine/dev/shared-browser/README.md
+# 🔴 12ms では実測で 15 回中 2 回、文字が入れ替わる/重複する (しかも無警告)。
+TYPE_DELAY=${SB_TYPE_DELAY:-100}
 
 # スロット N (0..MAX-1) → display :(99+N) / noVNC 5063+N / CDP 9222+N
 # ⚠ 5060/5061 はブラウザが SIP 用に拒否するので 5063 から始める
@@ -216,6 +226,67 @@ cmd_open() {
 		"/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=$VNC_PASSWORD"
 }
 
+# --- 日本語入力 -------------------------------------------------------------
+# 🔴 noVNC のクリップボード欄からは日本語を送れない (RFB 3.8 の ClientCutText は
+#    latin-1 固定。noVNC 1.6 は UTF-8 拡張を持つが x11vnc/libvncserver が持たない
+#    ので latin-1 へ落ち、日本語は全部 '?' になる)。実測は README を見ること。
+#    そこで **X のクリップボードをホスト側から直接叩く**。X ソケットは共有されて
+#    いるので、ホストの xsel がそのままコンテナ内の X に届く。
+
+require_running_slot() {   # → slot (無ければ die)
+	local key slot
+	key=$(default_key)
+	slot=$(registry_get "$key")
+	[ -n "$slot" ] || die "このセッションのインスタンスはまだ無い (先に up)"
+	container_running "$slot" || die "X+VNC コンテナが動いていない (先に up)"
+	printf '%s' "$slot"
+}
+
+read_text() {   # 引数があればそれ、無ければ stdin
+	if [ "$#" -gt 0 ]; then printf '%s' "$*"; else cat; fi
+}
+
+# クリップボードへ入れる。人間は noVNC 画面で入力欄をクリックして Ctrl+V。
+cmd_paste() {
+	local slot disp text got
+	slot=$(require_running_slot)
+	disp=$(slot_display "$slot")
+	text=$(read_text "$@")
+	[ -n "$text" ] || die "貼り付ける文字列が空 (引数か標準入力で渡す)"
+
+	# ⚠ xsel は選択の所有者としてそのまま常駐する (X の仕様上そうなる)。
+	#   display ごとに 1 つで、次に投入すると前の所有者は SelectionClear で終了する。
+	printf '%s' "$text" | DISPLAY="$disp" xsel -b -i
+	got=$(DISPLAY="$disp" xsel -b -o)
+	[ "$got" = "$text" ] || die "クリップボードへの書き込みを確認できなかった ($disp)"
+
+	log "クリップボード ($disp) に $(printf '%s' "$text" | LC_ALL=C.UTF-8 wc -m) 文字を入れた"
+	log "→ noVNC 画面で入力欄をクリックし、Ctrl+V を押す"
+}
+
+# 貼り付けを禁止しているフォーム向けのフォールバック。実キーとして打ち込む。
+# 🔴 xdotool は未割り当てのキーコードにキーシムを一時割り当てして打つので、
+#    速いと X のキーマップ更新が追いつかず **無警告で文字が化ける**。
+#    既定を 100ms にしてあるが、それでも打ち終わったら目視で確認すること。
+cmd_type() {
+	local slot disp container text
+	slot=$(require_running_slot)
+	disp=$(slot_display "$slot")
+	container=$(slot_container "$slot")
+	text=$(read_text "$@")
+	[ -n "$text" ] || die "入力する文字列が空 (引数か標準入力で渡す)"
+
+	docker_ exec "$container" sh -c 'command -v xdotool >/dev/null' \
+		|| die "このスロットのコンテナに xdotool が無い (イメージが古い)。down してから up し直す"
+
+	log "$disp の入力フォーカスへ $(printf '%s' "$text" | LC_ALL=C.UTF-8 wc -m) 文字を ${TYPE_DELAY}ms 間隔で打ち込む"
+	log "⚠ 先に noVNC 画面で入力欄をクリックしてフォーカスを当てておくこと"
+	# ⚠ LC_ALL を渡さないと xdotool が 'Invalid multi-byte sequence encountered' で落ちる
+	docker_ exec -e "DISPLAY=$disp" -e LC_ALL=C.UTF-8 "$container" \
+		xdotool type --clearmodifiers --delay "$TYPE_DELAY" -- "$text"
+	log "打ち終わった。🔴 化けていないか画面で確認すること"
+}
+
 down_slot() {
 	local slot=$1 pid
 	pid=$(chrome_pid "$slot")
@@ -314,5 +385,7 @@ case "${1:-status}" in
 	gc)     cmd_gc ;;
 	list)   cmd_list ;;
 	status) cmd_status ;;
-	*) die "usage: shared-browser {port|up|down [--all|<key>]|open|gc|list|status}" ;;
+	paste)  shift; cmd_paste "$@" ;;
+	type)   shift; cmd_type "$@" ;;
+	*) die "usage: shared-browser {port|up|down [--all|<key>]|open|gc|list|status|paste [text]|type [text]}" ;;
 esac
