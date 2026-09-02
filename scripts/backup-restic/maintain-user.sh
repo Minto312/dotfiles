@@ -32,11 +32,18 @@ RESTIC="$(resolve_bin restic)" || { echo "job=restic-$BACKUP_TAG-maintain status
 
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
+# 🔴 rc=11 は「リポジトリのロックに失敗」。中断されたジョブが残したロックが
+#    原因のことが多い。`restic unlock` は既定で stale なロックしか消さないので、
+#    1 回だけ解除して retry する。
 run_step() {
   local name="$1"; shift
   local s e rc out
   s=$(date +%s)
   out="$("$@" 2>&1)"; rc=$?
+  if [ $rc -eq 11 ]; then
+    "$RESTIC" unlock >/dev/null 2>&1
+    out="$("$@" 2>&1)"; rc=$?
+  fi
   e=$(date +%s)
   local line="ts=$(now_iso) job=restic-$BACKUP_TAG-$name status=$([ $rc -eq 0 ] && echo ok || echo error) rc=$rc duration_s=$((e - s))"
   if [ $rc -ne 0 ]; then
