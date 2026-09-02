@@ -95,16 +95,26 @@ rm -f "$tmp_json.err"
 log "$line"
 
 # --- forget (prune はしない。重いので maintain-user.sh の担当) ---
+#
+# 🔴 rc=11 は「リポジトリのロックに失敗」。中断されたジョブ (kill -9 など) が
+#    ロックを残すと、以後の forget が毎晩失敗し続ける。`restic unlock` は
+#    既定で stale なロックしか消さないので、1 回だけ解除して retry する。
 if [ "$status" != "error" ]; then
   f_start=$(date +%s)
-  f_out="$("$RESTIC" forget \
-    --tag "$BACKUP_TAG" \
-    --keep-daily "$KEEP_DAILY" \
-    --keep-weekly "$KEEP_WEEKLY" \
-    --keep-monthly "$KEEP_MONTHLY" 2>&1)"
-  f_rc=$?
+  unlocked=0
+  for attempt in 1 2; do
+    "$RESTIC" forget \
+      --tag "$BACKUP_TAG" \
+      --keep-daily "$KEEP_DAILY" \
+      --keep-weekly "$KEEP_WEEKLY" \
+      --keep-monthly "$KEEP_MONTHLY" >/dev/null 2>&1
+    f_rc=$?
+    [ "$f_rc" -ne 11 ] && break
+    [ "$attempt" -eq 2 ] && break
+    "$RESTIC" unlock >/dev/null 2>&1 && unlocked=1
+  done
   f_dur=$(($(date +%s) - f_start))
-  log "ts=$(now_iso) job=restic-$BACKUP_TAG-forget status=$([ $f_rc -eq 0 ] && echo ok || echo error) rc=$f_rc duration_s=$f_dur"
+  log "ts=$(now_iso) job=restic-$BACKUP_TAG-forget status=$([ $f_rc -eq 0 ] && echo ok || echo error) rc=$f_rc unlocked=$unlocked duration_s=$f_dur"
 fi
 
 exit "$rc"

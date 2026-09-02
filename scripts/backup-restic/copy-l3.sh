@@ -18,7 +18,10 @@
 set -uo pipefail
 
 : "${L1_REPO:=sftp:pve-backup:/rpool/backup/develop-restic}"
-: "${L3_RCLONE_PATH:=gdrive:backup/develop-restic}"
+# 🔴 scope=drive.file は「その OAuth クライアント自身が作ったファイル」しか見えない。
+#    client_id を差し替えると旧 client が作った repo は見えなくなるので、
+#    client_id を変えるときは repo を作り直すこと (旧パスは手で消す)。
+: "${L3_RCLONE_PATH:=gdrive:restic/develop-user}"
 : "${RESTIC_PASSWORD_FILE:=$HOME/.local/state/restic/develop-user.pass}"
 : "${RESTIC_CACHE_DIR:=$HOME/.cache/restic}"
 : "${BACKUP_TAG:=user}"
@@ -92,12 +95,23 @@ L3_REPO="rest:http://restic:$serve_pass@127.0.0.1:$port/"
 
 # --- copy (L1 -> L3) ---
 s=$(date +%s)
-out="$("$RESTIC" -r "$L3_REPO" copy \
-  -o "rest.connections=$REST_CONNECTIONS" \
-  --from-repo "$L1_REPO" \
-  --password-file "$RESTIC_PASSWORD_FILE" \
-  --from-password-file "$RESTIC_PASSWORD_FILE" 2>&1)"
+# 🔴 rc=11 は「リポジトリのロックに失敗」。中断されたジョブが L1/L3 に残した
+#    ロックが原因。`restic unlock` は既定で stale なロックしか消さない。
+do_copy() {
+  "$RESTIC" -r "$L3_REPO" copy \
+    -o "rest.connections=$REST_CONNECTIONS" \
+    --from-repo "$L1_REPO" \
+    --password-file "$RESTIC_PASSWORD_FILE" \
+    --from-password-file "$RESTIC_PASSWORD_FILE" 2>&1
+}
+out="$(do_copy)"
 rc=$?
+if [ $rc -eq 11 ]; then
+  "$RESTIC" -r "$L3_REPO" --password-file "$RESTIC_PASSWORD_FILE" unlock >/dev/null 2>&1
+  "$RESTIC" -r "$L1_REPO" --password-file "$RESTIC_PASSWORD_FILE" unlock >/dev/null 2>&1
+  out="$(do_copy)"
+  rc=$?
+fi
 dur=$(($(date +%s) - s))
 
 copied=$(printf '%s' "$out" | grep -cE 'snapshot [0-9a-f]+ saved' || true)
