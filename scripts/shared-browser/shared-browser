@@ -332,7 +332,7 @@ cmd_ime() {
 		     if [ "$out" = 2 ]; then
 			 log "かな入力に切り替えた。ローマ字で打ち、Space で変換、Enter で確定する"
 		     else
-			 die "切り替わらなかった (state=$out)。**先に noVNC 画面で入力欄をクリック**してから実行する"
+			 die "切り替わらなかった (state=$out)。**先に noVNC 画面で入力欄をクリック**してから実行する (クリックしても入力文脈が出ないときは、その欄で何かキーを 1 回押してからもう一度)"
 		     fi ;;
 		off) docker_ exec "${env[@]}" "$container" fcitx5-remote -c >/dev/null
 		     log "英数入力に戻した" ;;
