@@ -326,7 +326,14 @@ cmd_ime() {
 		-e "LANG=$IME_LOCALE")
 	case "$action" in
 		on)  docker_ exec "${env[@]}" "$container" fcitx5-remote -o >/dev/null
-		     log "かな入力に切り替えた。ローマ字で打ち、Space で変換、Enter で確定する" ;;
+		     # 🔴 fcitx5-remote は「今の入力文脈」に効く。入力欄をクリックする前に
+		     #    呼んでも黙って何も起きないので、実際に切り替わったかを確認する。
+		     out=$(docker_ exec "${env[@]}" "$container" fcitx5-remote 2>/dev/null | tr -d '[:space:]')
+		     if [ "$out" = 2 ]; then
+			 log "かな入力に切り替えた。ローマ字で打ち、Space で変換、Enter で確定する"
+		     else
+			 die "切り替わらなかった (state=$out)。**先に noVNC 画面で入力欄をクリック**してから実行する"
+		     fi ;;
 		off) docker_ exec "${env[@]}" "$container" fcitx5-remote -c >/dev/null
 		     log "英数入力に戻した" ;;
 		status)
