@@ -46,8 +46,11 @@ IMAGE=${SB_IMAGE:-shared-browser-x:$(cat "$HERE/docker/Dockerfile" "$HERE/docker
 # 🔴 12ms では実測で 15 回中 2 回、文字が入れ替わる/重複する (しかも無警告)。
 TYPE_DELAY=${SB_TYPE_DELAY:-100}
 
-# 日本語 IME (コンテナ内の fcitx5-mozc に XIM で繋ぐ)。SB_IME=0 で無効化できる。
+# 日本語 IME (コンテナ内の fcitx5 + anthy に XIM で繋ぐ)。SB_IME=0 で無効化できる。
 IME=${SB_IME:-1}
+# かな/英数の切り替えキー (空白区切りで複数指定できる)。
+# 🔴 Ctrl+Space は手元の OS の IME に横取りされることがあるので Shift+Space も既定で有効にする。
+IME_TRIGGERS=${SB_IME_TRIGGERS:-Control+space Shift+space}
 # ⚠ Xlib の XIM は「Xlib が locale.dir に持っているロケール」でしか動かない。
 #   C.UTF-8 は locale.alias 経由で en_US.UTF-8 に化けるので日本語には使わない。
 IME_LOCALE=${SB_IME_LOCALE:-ja_JP.UTF-8}
@@ -182,7 +185,7 @@ cmd_up() {
 		docker_ run -d --name "$(slot_container "$slot")" --ipc=host --init \
 			-v /tmp/.X11-unix:/tmp/.X11-unix \
 			-e "DISP=$disp" -e "GEOM=$GEOMETRY" -e "VNC_PASSWORD=$VNC_PASSWORD" \
-			-e "IME=$IME" \
+			-e "IME=$IME" -e "IME_TRIGGERS=$IME_TRIGGERS" \
 			-p "127.0.0.1:$novnc:6080" "$IMAGE" >/dev/null
 		local i
 		for i in $(seq 1 40); do
@@ -311,12 +314,14 @@ cmd_type() {
 }
 
 # 日本語 IME (コンテナ内の fcitx5 + anthy) の切り替え。
-# ⚠ **普段は画面で Ctrl+Space を押せばよく、このコマンドは要らない。**
+# ⚠ **普段は画面で Ctrl+Space か Shift+Space を押せばよく、このコマンドは要らない。**
 #    (以前「Ctrl+Space は noVNC 越しに効かない」と書いたのは誤りだった。
-#     Ctrl 押下と Space 押下が **完全に同時** = 間隔 0 のときだけ効かず、
+#     修飾キーと Space が **完全に同時** = 間隔 0 のときだけ効かず、
 #     20ms でも空けば通る。人間の指では必ず空くので実用上は常に効く。)
-# 使い道は「手元の OS/IME に Ctrl+Space を横取りされる」場合と、
-# 自動化から確実に切り替えたい場合。→ machine/dev/shared-browser/README.md
+#    **Ctrl+Space は手元の OS の IME に横取りされることがある**ので Shift+Space も
+#    既定で有効にしてある (SB_IME_TRIGGERS で変えられる)。
+# 使い道は「どちらのキーも手元で取られる」場合と、自動化から確実に切り替えたい場合。
+# → machine/dev/shared-browser/README.md
 cmd_ime() {
 	local slot container action=${1:-status} out
 	slot=$(require_running_slot)

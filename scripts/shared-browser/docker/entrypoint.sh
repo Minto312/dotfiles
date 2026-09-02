@@ -17,9 +17,9 @@ if [ "$IME" = 1 ]; then
 	export LANG=ja_JP.UTF-8 LC_CTYPE=ja_JP.UTF-8
 	mkdir -p /root/.config/fcitx5
 	# 入力メソッドは「英数 (keyboard-us)」と「anthy」の 2 つ。
-	# 切り替えは画面で **Ctrl+Space**。noVNC 越しでも効く (Ctrl と Space が
-	# 完全に同時 = 間隔 0 のときだけ効かないが、人間の指では必ず空く)。
-	# 手元の OS/IME に横取りされる場合は `shared-browser ime {on|off}`。
+	# 切り替えは画面で **Ctrl+Space** または **Shift+Space**。noVNC 越しでも効く
+	# (修飾キーと Space が完全に同時 = 間隔 0 のときだけ効かないが、人間の指では必ず空く)。
+	# どちらも手元の OS に取られる場合は `shared-browser ime {on|off}`。
 	cat >/root/.config/fcitx5/profile <<-'PROF'
 		[Groups/0]
 		Name=Default
@@ -37,8 +37,18 @@ if [ "$IME" = 1 ]; then
 		[GroupOrder]
 		0=Default
 	PROF
-	# 既定は英数にする (URL バーまでかなになると邪魔なので)
-	printf '[Behavior]\nActiveByDefault=False\n' >/root/.config/fcitx5/config
+	# 既定は英数にする (URL バーまでかなになると邪魔なので)。
+	# 🔴 切り替えキーは **Ctrl+Space と Shift+Space の両方**を有効にする。
+	#    Ctrl+Space は **手元の OS の IME (Windows の IME が典型) に横取りされて
+	#    ブラウザまで届かないことがある**ため。どちらも noVNC 越しに効くことを実測済み。
+	{
+		printf '[Behavior]\nActiveByDefault=False\n\n[Hotkey/TriggerKeys]\n'
+		i=0
+		for k in ${IME_TRIGGERS:-Control+space Shift+space}; do
+			printf '%s=%s\n' "$i" "$k"
+			i=$((i + 1))
+		done
+	} >/root/.config/fcitx5/config
 	# ⚠ fcitx5 は D-Bus セッションバスを要求する。ホストのバスは借りず
 	#   コンテナ内に専用のものを立てる (経路を跨がせない)。
 	export DBUS_SESSION_BUS_ADDRESS="unix:path=/tmp/fcitx5-bus"
