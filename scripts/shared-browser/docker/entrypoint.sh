@@ -17,9 +17,9 @@ if [ "$IME" = 1 ]; then
 	export LANG=ja_JP.UTF-8 LC_CTYPE=ja_JP.UTF-8
 	mkdir -p /root/.config/fcitx5
 	# 入力メソッドは「英数 (keyboard-us)」と「anthy」の 2 つ。
-	# 🔴 切り替えは `shared-browser ime {on|off}` で行う。**Ctrl+Space は
-	#    noVNC 越しには効かない** (入力文脈は繋がっているのに fcitx5 の
-	#    グローバルなキーグラブに届かない。x11vnc の -xkb でも変わらず・実測)。
+	# 切り替えは画面で **Ctrl+Space**。noVNC 越しでも効く (Ctrl と Space が
+	# 完全に同時 = 間隔 0 のときだけ効かないが、人間の指では必ず空く)。
+	# 手元の OS/IME に横取りされる場合は `shared-browser ime {on|off}`。
 	cat >/root/.config/fcitx5/profile <<-'PROF'
 		[Groups/0]
 		Name=Default
