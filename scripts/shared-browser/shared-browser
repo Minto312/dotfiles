@@ -46,6 +46,12 @@ IMAGE=${SB_IMAGE:-shared-browser-x:$(cat "$HERE/docker/Dockerfile" "$HERE/docker
 # 🔴 12ms では実測で 15 回中 2 回、文字が入れ替わる/重複する (しかも無警告)。
 TYPE_DELAY=${SB_TYPE_DELAY:-100}
 
+# 日本語 IME (コンテナ内の fcitx5-mozc に XIM で繋ぐ)。SB_IME=0 で無効化できる。
+IME=${SB_IME:-1}
+# ⚠ Xlib の XIM は「Xlib が locale.dir に持っているロケール」でしか動かない。
+#   C.UTF-8 は locale.alias 経由で en_US.UTF-8 に化けるので日本語には使わない。
+IME_LOCALE=${SB_IME_LOCALE:-ja_JP.UTF-8}
+
 # スロット N (0..MAX-1) → display :(99+N) / noVNC 5063+N / CDP 9222+N
 # ⚠ 5060/5061 はブラウザが SIP 用に拒否するので 5063 から始める
 SLOT_MAX=${SB_SLOT_MAX:-20}
@@ -171,9 +177,12 @@ cmd_up() {
 	else
 		docker_ rm -f "$(slot_container "$slot")" >/dev/null 2>&1 || true
 		# --ipc=host は X の MIT-SHM をホストの Chrome と共有させるため
-		docker_ run -d --name "$(slot_container "$slot")" --ipc=host \
+		# ⚠ --init が要る。PID 1 は `exec websockify` で子を刈らないので、
+		#   fcitx5 や mozc_server が入れ替わるたびにゾンビが積もる (実測で 6 個)
+		docker_ run -d --name "$(slot_container "$slot")" --ipc=host --init \
 			-v /tmp/.X11-unix:/tmp/.X11-unix \
 			-e "DISP=$disp" -e "GEOM=$GEOMETRY" -e "VNC_PASSWORD=$VNC_PASSWORD" \
+			-e "IME=$IME" \
 			-p "127.0.0.1:$novnc:6080" "$IMAGE" >/dev/null
 		local i
 		for i in $(seq 1 40); do
@@ -186,8 +195,19 @@ cmd_up() {
 	if [ -n "$(chrome_pid "$slot")" ]; then
 		log "Chrome は起動済み (pid $(chrome_pid "$slot"))"
 	else
+		# 🔴 IME は XIM で繋ぐ。GTK_IM_MODULE=xim でホストの GTK が im-xim.so を
+		#    読み、XMODIFIERS の @im=fcitx でコンテナ内の fcitx5 を指す。
+		#    im-xim.so は libgtk-3-0t64 = Chrome 自身の依存に入っているので
+		#    **ホストへ入れるものは無い**。
+		# ⚠ Xlib の XIM は「Xlib が対応しているロケール」でないと黙って無効になる。
+		#    ja_JP.UTF-8 を明示する (develop には生成済み)。
+		local -a imeenv=()
+		if [ "$IME" = 1 ]; then
+			imeenv=(GTK_IM_MODULE=xim XMODIFIERS=@im=fcitx QT_IM_MODULE=xim
+				LANG="$IME_LOCALE" LC_CTYPE="$IME_LOCALE")
+		fi
 		# setsid で親から切り離す。落とすときは profile でプロセスを引く
-		DISPLAY=$disp setsid nohup google-chrome \
+		DISPLAY=$disp setsid nohup env "${imeenv[@]}" google-chrome \
 			--user-data-dir="$profile" \
 			--remote-debugging-port="$cdp" \
 			--no-first-run --no-default-browser-check \
@@ -290,6 +310,37 @@ cmd_type() {
 	log "打ち終わった。🔴 化けていないか画面で確認すること"
 }
 
+# 日本語 IME (コンテナ内の fcitx5 + anthy) の切り替え。
+# 🔴 **Ctrl+Space は noVNC 越しには効かない** — 入力文脈は繋がっているのに
+#    fcitx5 のグローバルなキーグラブに届かない (x11vnc の -xkb でも変わらず。実測)。
+#    なので切り替えはこのコマンドで行う。→ machine/dev/shared-browser/README.md
+cmd_ime() {
+	local slot container action=${1:-status} out
+	slot=$(require_running_slot)
+	container=$(slot_container "$slot")
+	docker_ exec "$container" sh -c 'command -v fcitx5-remote >/dev/null' \
+		|| die "このスロットのコンテナに IME が無い (SB_IME=0 で起動したか、イメージが古い)"
+
+	local -a env=(-e "DISPLAY=$(slot_display "$slot")"
+		-e "DBUS_SESSION_BUS_ADDRESS=unix:path=/tmp/fcitx5-bus"
+		-e "LANG=$IME_LOCALE")
+	case "$action" in
+		on)  docker_ exec "${env[@]}" "$container" fcitx5-remote -o >/dev/null
+		     log "かな入力に切り替えた。ローマ字で打ち、Space で変換、Enter で確定する" ;;
+		off) docker_ exec "${env[@]}" "$container" fcitx5-remote -c >/dev/null
+		     log "英数入力に戻した" ;;
+		status)
+		     out=$(docker_ exec "${env[@]}" "$container" fcitx5-remote 2>/dev/null | tr -d '[:space:]')
+		     case "$out" in
+			 0) log "入力文脈なし (ブラウザの入力欄をクリックすると付く)" ;;
+			 1) log "英数入力" ;;
+			 2) log "かな入力" ;;
+			 *) log "不明 ($out)" ;;
+		     esac ;;
+		*)   die "usage: shared-browser ime {on|off|status}" ;;
+	esac
+}
+
 down_slot() {
 	local slot=$1 pid
 	pid=$(chrome_pid "$slot")
@@ -390,5 +441,6 @@ case "${1:-status}" in
 	status) cmd_status ;;
 	paste)  shift; cmd_paste "$@" ;;
 	type)   shift; cmd_type "$@" ;;
-	*) die "usage: shared-browser {port|up|down [--all|<key>]|open|gc|list|status|paste [text]|type [text]}" ;;
+	ime)    shift; cmd_ime "$@" ;;
+	*) die "usage: shared-browser {port|up|down [--all|<key>]|open|gc|list|status|paste [text]|type [text]|ime {on|off|status}}" ;;
 esac
