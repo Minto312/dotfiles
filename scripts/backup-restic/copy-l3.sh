@@ -80,14 +80,19 @@ trap cleanup EXIT
   "$L3_RCLONE_PATH" > "$serve_log" 2>&1 &
 serve_pid=$!
 
+# 🔴 90 秒待つ。30 秒では足りないことが実際にあった (2026-09-02 の timer 発火で
+#    `rclone serve failed to listen` になり、rclone は生きているのに 30 秒以内に
+#    bind しなかった。手で叩くと 3〜6 秒なので、OAuth トークンの更新か Drive API の
+#    遅延と思われる)。失敗時に serve が生きていたかを残しておくと次の診断が速い。
 listening=0
-for _ in $(seq 1 30); do
+for _ in $(seq 1 90); do
   if ss -ltn 2>/dev/null | grep -q ":$port "; then listening=1; break; fi
   kill -0 "$serve_pid" 2>/dev/null || break
   sleep 1
 done
 if [ "$listening" -ne 1 ]; then
-  emit "ts=$(now_iso) job=restic-l3 status=error reason=\"rclone serve failed to listen\" port=$port error=\"$(clean < "$serve_log")\""
+  alive=0; kill -0 "$serve_pid" 2>/dev/null && alive=1
+  emit "ts=$(now_iso) job=restic-l3 status=error reason=\"rclone serve failed to listen\" port=$port serve_alive=$alive error=\"$(clean < "$serve_log")\""
   exit 1
 fi
 
