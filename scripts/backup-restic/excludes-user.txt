@@ -1,0 +1,51 @@
+# restic 除外リスト (develop の ~ 用)
+# 方針: 再生成できるものだけを外す。「ここにしか無いもの」は絶対に足さない。
+# 実測の根拠は machine/storage/backup-develop.md §3.3。
+
+# --- ビルド成果物・依存 ---
+**/node_modules
+**/target
+**/.terraform
+**/.venv
+**/venv
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+**/.next
+**/.turbo
+**/.gradle
+**/dist
+**/.parcel-cache
+
+# --- ツールのキャッシュ・ランタイム (再取得できる) ---
+/home/karinto/.cache
+/home/karinto/go
+/home/karinto/.rustup
+/home/karinto/.cargo/registry
+/home/karinto/.npm
+/home/karinto/.nvm
+/home/karinto/.bun
+/home/karinto/.texlive2025
+/home/karinto/nuclei-templates
+/home/karinto/tmp
+/home/karinto/.local/pwsh-*
+/home/karinto/.local/share/uv
+/home/karinto/.local/share/nvim
+/home/karinto/.local/share/claude
+/home/karinto/.claude/plugins
+/home/karinto/.claude/cache
+/home/karinto/.codex/packages
+/home/karinto/.codex/.tmp
+/home/karinto/.gemini/antigravity-cli
+
+# --- ブラウザ probe 系 (使い捨て) ---
+/home/karinto/.local/state/shared-browser
+/home/karinto/.local/state/browser-attach-probe
+/home/karinto/.local/state/cdp-probe
+
+# --- worktree (親リポジトリから復元できる) ---
+**/.claude/worktrees
+
+# --- restic 自身のキャッシュ ---
+/home/karinto/.cache/restic
