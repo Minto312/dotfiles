@@ -311,9 +311,12 @@ cmd_type() {
 }
 
 # 日本語 IME (コンテナ内の fcitx5 + anthy) の切り替え。
-# 🔴 **Ctrl+Space は noVNC 越しには効かない** — 入力文脈は繋がっているのに
-#    fcitx5 のグローバルなキーグラブに届かない (x11vnc の -xkb でも変わらず。実測)。
-#    なので切り替えはこのコマンドで行う。→ machine/dev/shared-browser/README.md
+# ⚠ **普段は画面で Ctrl+Space を押せばよく、このコマンドは要らない。**
+#    (以前「Ctrl+Space は noVNC 越しに効かない」と書いたのは誤りだった。
+#     Ctrl 押下と Space 押下が **完全に同時** = 間隔 0 のときだけ効かず、
+#     20ms でも空けば通る。人間の指では必ず空くので実用上は常に効く。)
+# 使い道は「手元の OS/IME に Ctrl+Space を横取りされる」場合と、
+# 自動化から確実に切り替えたい場合。→ machine/dev/shared-browser/README.md
 cmd_ime() {
 	local slot container action=${1:-status} out
 	slot=$(require_running_slot)
