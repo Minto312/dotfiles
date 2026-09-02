@@ -70,12 +70,12 @@ body="$(
   row "L1 (~/)"    "backup-user"   "restic-user"
   row "L1 (root)"  "backup-root"   "restic-root"
   row "L3 (Drive)" "backup-l3"     "restic-l3"
-  row "check"      "maintain-user" "restic-user-check"
+  row "check"      "restic-maintain" "restic-user-check"
 )"
 
 # 容量 (リポジトリと Drive の空き)。取れなければ行を出さない。
 sizes=""
-repo_b="$(vl_count '{service.name="maintain-user"} | unpack_logfmt | filter job:=restic-user-stats | stats max(repo_size_b) as n')"
+repo_b="$(vl_count '{service.name="restic-maintain"} | unpack_logfmt | filter job:=restic-user-stats | stats max(repo_size_b) as n')"
 free_b="$(vl_count '{service.name="backup-l3"} | unpack_logfmt | filter job:=restic-l3-quota | stats max(drive_free_b) as n')"
 gib() { awk -v b="$1" 'BEGIN{ if (b+0>0) printf "%.2f GiB", b/1073741824; else print "-" }'; }
 tib() { awk -v b="$1" 'BEGIN{ if (b+0>0) printf "%.2f TiB", b/1099511627776; else print "-" }'; }
