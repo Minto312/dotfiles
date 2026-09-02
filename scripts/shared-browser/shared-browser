@@ -26,7 +26,10 @@
 # 背景と実測は machine/dev/shared-browser/README.md
 set -euo pipefail
 
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# 🔴 readlink -f を通すこと。~/.local/bin から symlink して呼ばれると
+#    ${BASH_SOURCE[0]} は symlink 自身なので、素の dirname では ~/.local/bin を指し、
+#    docker/ も ../lenovo-tunnel/ も見つからなくなる。
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 
 GEOMETRY=${SB_GEOMETRY:-1600x900x24}
 CLIENT_HOST=${SB_CLIENT_HOST:-lenovo}
