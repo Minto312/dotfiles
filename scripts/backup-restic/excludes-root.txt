@@ -1,0 +1,21 @@
+# restic 除外リスト (develop の root 領域用)
+# 対象は /etc /var/lib/docker/volumes /var/lib/tailscale /var/spool/cron /root
+# 再生成できるもの・巨大でどうでもいいものだけを外す。
+
+# Docker のイメージ層とコンテナ (named volume だけが要る)
+/var/lib/docker/overlay2
+/var/lib/docker/image
+/var/lib/docker/containers
+/var/lib/docker/buildkit
+/var/lib/docker/tmp
+
+# root のキャッシュ類
+/root/.cache
+/root/go
+/root/.npm
+/root/.cargo/registry
+/root/.rustup
+
+# ソケット・ロック
+**/*.sock
+**/*.pid
