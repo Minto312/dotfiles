@@ -212,6 +212,51 @@ def scan_auction(query: str) -> list[dict]:
     return out
 
 
+
+def verify(hit: dict) -> dict | None:
+    """候補の商品ページを開いて型番まで確定させる。
+
+    検索結果のタイトルは途中で切れることがあり、それだけでは RDIMM か
+    ECC UDIMM かを決められない。🔴 実際に「PC4-2133」で切れていた出品を開いたら
+    `PC4-2133P-EE0-11 HMA41GU7AFR8N-TF` (= ECC UDIMM) だった。
+
+    見るのは 2 箇所だけ:
+      - <title> …… 検索結果より長い全文タイトルが入っている
+      - フリマの JSON-LD "description" …… 出品者が書いた型番がそのまま入る
+    ⚠ ヤフオクの商品ページ本文は「関連商品」の見出しを大量に含むので使わない
+      (別の出品の型番を拾って誤判定する)。
+    """
+    try:
+        html = fetch(hit["url"])
+    except Exception as e:  # noqa: BLE001
+        print(f"warn: verify({hit['id']}): {e}", file=sys.stderr)
+        return hit  # 確認できなかっただけ。落とさずに ❓ のまま流す
+
+    text = ""
+    m = re.search(r"<title>(.*?)</title>", html, re.S)
+    if m:
+        text += " " + re.sub(r"\s+", " ", m.group(1))
+    if hit["src"] == "フリマ":
+        d = re.search(r'"description":"(.*?)(?<!\\)"', html, re.S)
+        if d:
+            text += " " + d.group(1).replace("\\n", " ")
+
+    if not text.strip():
+        return hit
+
+    # 🔴 ここで初めて弾けるものがある。確定で使えないと分かったら通知しない。
+    if PART_BAD.search(text) or JEDEC_BAD.search(text) or WORD_BAD.search(text):
+        print(f"info: {hit['id']} は規格違い (UDIMM 等) と判明したので除外", file=sys.stderr)
+        return None
+
+    jm = JEDEC_RDIMM.search(text)
+    pm = PART_RDIMM.search(text)
+    if jm or pm:
+        hit["grade"] = "確定"
+        hit["evidence"] = (jm or pm).group(0)[:28]
+    return hit
+
+
 def collect(max_per_gb: int) -> list[dict]:
     seen_ids: set[str] = set()
     hits: list[dict] = []
@@ -246,8 +291,15 @@ def collect(max_per_gb: int) -> list[dict]:
                          risky=bool(WORD_RISKY.search(r["title"])),
                          tested=bool(WORD_TESTED.search(r["title"])))
                 hits.append(r)
-    hits.sort(key=lambda x: x["per_gb"])
-    return hits
+    # 候補は多くても数件なので、1 件ずつ商品ページを開いて型番を確定させる。
+    verified = []
+    for h in hits:
+        time.sleep(3.0)
+        v = verify(h)
+        if v:
+            verified.append(v)
+    verified.sort(key=lambda x: x["per_gb"])
+    return verified
 
 
 def load_seen() -> set[str]:
@@ -280,6 +332,7 @@ def render(hits: list[dict]) -> str:
     lines = [f"**pve 増設用 DDR4 RDIMM の新着 {len(hits)} 件**"]
     for h in hits:
         flag = "✅" if h["grade"] == "確定" else "❓"
+        ev = f" `{h['evidence']}`" if h.get("evidence") else ""
         tags = []
         if h["tested"]:
             tags.append("動作確認済")
@@ -290,9 +343,11 @@ def render(hits: list[dict]) -> str:
         lines.append(
             f"\n{flag} **{h['per_gb']:,}円/GB**{buy} — {h['price']:,}円 / {h['gb']}GB"
             f" ({h['src']}・{h['note']}){tag}\n"
-            f"{h['title'][:90]}\n{h['url']}")
-    lines.append("\n⚠️ 型番と JEDEC 表記 (`PC4-xxxxx-**R**`) を必ず自分の目で確認すること。"
-                 "❓ は RDIMM 表記のみで型番未確認。")
+            f"{h['title'][:90]}{ev}\n{h['url']}")
+    lines.append("\n✅ = 商品ページまで開いて RDIMM の型番/JEDEC 表記を確認済み (根拠を併記)。"
+                 "\n❓ = ページに型番の記載が無く確定できなかったもの。"
+                 "出品写真のラベルで `PC4-xxxxx-**R**xx` (R が Registered) か、"
+                 "`HMA…R7…` / `M393A…` / `MTA…PZ` / `KVR…R…` を確認してから買うこと。")
     return "\n".join(lines)
 
 
