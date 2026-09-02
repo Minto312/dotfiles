@@ -8,7 +8,7 @@ Xvfb "$DISP" -screen 0 "$GEOM" -ac -nolisten tcp &
 for i in $(seq 1 50); do xdpyinfo -display "$DISP" >/dev/null 2>&1 && break; sleep 0.2; done
 openbox &
 
-# 日本語 IME (fcitx5 + mozc)。ホストの Chrome へは XIM で繋がる。
+# 日本語 IME (fcitx5 + anthy)。ホストの Chrome へは XIM で繋がる。
 # 🔴 **Chrome より先に起動していること**が必須。XIM クライアントは起動時に
 #    サーバを探しに行くので、あとから fcitx5 を立てても繋がらない (実測)。
 #    shared-browser の cmd_up は「コンテナを待ってから Chrome」なので順序は満たされる。
@@ -16,7 +16,10 @@ if [ "$IME" = 1 ]; then
 	# ⚠ ja_JP.UTF-8 でないと Xlib の XIM が黙って無効になる (C.UTF-8 は不可)
 	export LANG=ja_JP.UTF-8 LC_CTYPE=ja_JP.UTF-8
 	mkdir -p /root/.config/fcitx5
-	# 入力メソッドは「英数 (keyboard-us)」と「anthy」の 2 つ。Ctrl+Space で切り替える。
+	# 入力メソッドは「英数 (keyboard-us)」と「anthy」の 2 つ。
+	# 🔴 切り替えは `shared-browser ime {on|off}` で行う。**Ctrl+Space は
+	#    noVNC 越しには効かない** (入力文脈は繋がっているのに fcitx5 の
+	#    グローバルなキーグラブに届かない。x11vnc の -xkb でも変わらず・実測)。
 	cat >/root/.config/fcitx5/profile <<-'PROF'
 		[Groups/0]
 		Name=Default
@@ -34,7 +37,7 @@ if [ "$IME" = 1 ]; then
 		[GroupOrder]
 		0=Default
 	PROF
-	# 既定は英数。URL バーまでかなになると邪魔なので Ctrl+Space で切り替える方式にする
+	# 既定は英数にする (URL バーまでかなになると邪魔なので)
 	printf '[Behavior]\nActiveByDefault=False\n' >/root/.config/fcitx5/config
 	# ⚠ fcitx5 は D-Bus セッションバスを要求する。ホストのバスは借りず
 	#   コンテナ内に専用のものを立てる (経路を跨がせない)。
