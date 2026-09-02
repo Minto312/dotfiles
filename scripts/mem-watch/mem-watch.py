@@ -16,7 +16,8 @@
   mem-watch.py                # 新着だけ通知
   mem-watch.py --dry-run      # Discord へ送らず標準出力に出す
   mem-watch.py --all          # 既知のものも含めて出す (棚卸し用)
-  mem-watch.py --max-yen-per-gb 350
+  mem-watch.py --max-yen-per-gb 300   # もっと絞る
+  mem-watch.py --min-gb 32            # 容量の下限を付ける (既定は制限なし)
 """
 from __future__ import annotations
 
@@ -79,8 +80,15 @@ WORD_RDIMM = re.compile(r"RDIMM|Registered|ECC\s*Reg", re.I)
 WORD_RISKY = re.compile(r"ジャンク|動作未確認|部品取り|保証なし|難あり", re.I)
 WORD_TESTED = re.compile(r"動作確認済|動作品|memtest|検品済|テスト済|起動確認", re.I)
 
-MIN_GB = 32          # 4 枚 (2 枚 x 2CPU) 相当より下は買っても構成が組めない
-DEFAULT_MAX_YEN_PER_GB = 400
+# 容量の下限は設けない。**容量違いを混ぜる (663〜666 は相互に混在可) 前提**なので、
+# 単品でも安ければ拾う価値がある。上限だけはパース誤りよけに残す。
+MAX_GB = 256
+# 🔴 2026-09-02 実測 (ヤフオクの RDIMM 107 件):
+#   即決価格ベースの ¥/GB は **最安が 469** で、400 以下の即決は 1 件も無い。
+#   現在価格 (入札中) ベースなら 5 分位が 312、350 以下は 6/107 = 5.6%。
+#   フリマ側は固定価格で 313〜375 の実例があったので、350 は
+#   「フリマの上澄み」と「競り途中のヤフオク」だけが引っかかる水準になる。
+DEFAULT_MAX_YEN_PER_GB = 350
 FETCH_INTERVAL = 6.0   # 秒。1 実行で 4 リクエストしか投げない
 
 
@@ -225,12 +233,16 @@ def collect(max_per_gb: int) -> list[dict]:
                 if not verdict:
                     continue
                 gb = total_gb(r["title"])
-                if not gb or gb < MIN_GB or gb > 256 or r["price"] <= 0:
+                if not gb or gb > MAX_GB or r["price"] <= 0:
                     continue
                 per_gb = round(r["price"] / gb)
                 if per_gb > max_per_gb:
                     continue
-                r.update(gb=gb, per_gb=per_gb, grade=verdict[0], why=verdict[1],
+                # 即決がある場合の ¥/GB も出す (今すぐ確定で買える上限)
+                bm = re.search(r"即決 ([\d,]+)円", r["note"])
+                buy_per_gb = round(int(bm.group(1).replace(",", "")) / gb) if bm else None
+                r.update(gb=gb, per_gb=per_gb, buy_per_gb=buy_per_gb,
+                         grade=verdict[0], why=verdict[1],
                          risky=bool(WORD_RISKY.search(r["title"])),
                          tested=bool(WORD_TESTED.search(r["title"])))
                 hits.append(r)
@@ -274,8 +286,9 @@ def render(hits: list[dict]) -> str:
         if h["risky"]:
             tags.append("⚠️ジャンク/未確認")
         tag = f" [{' / '.join(tags)}]" if tags else ""
+        buy = (f" / 即決なら {h['buy_per_gb']:,}円/GB" if h.get("buy_per_gb") else "")
         lines.append(
-            f"\n{flag} **{h['per_gb']:,}円/GB** — {h['price']:,}円 / {h['gb']}GB"
+            f"\n{flag} **{h['per_gb']:,}円/GB**{buy} — {h['price']:,}円 / {h['gb']}GB"
             f" ({h['src']}・{h['note']}){tag}\n"
             f"{h['title'][:90]}\n{h['url']}")
     lines.append("\n⚠️ 型番と JEDEC 表記 (`PC4-xxxxx-**R**`) を必ず自分の目で確認すること。"
@@ -302,14 +315,15 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--all", action="store_true", help="既知の出品も出す")
     ap.add_argument("--max-yen-per-gb", type=int, default=DEFAULT_MAX_YEN_PER_GB)
+    ap.add_argument("--min-gb", type=int, default=0, help="合計容量の下限 (既定 0 = 制限なし)")
     a = ap.parse_args()
 
-    hits = collect(a.max_yen_per_gb)
+    hits = [h for h in collect(a.max_yen_per_gb) if h["gb"] >= a.min_gb]
     seen = load_seen()
     fresh = hits if a.all else [h for h in hits if h["id"] not in seen]
 
     print(f"検出 {len(hits)} 件 / 新着 {len(fresh)} 件 "
-          f"(上限 {a.max_yen_per_gb}円/GB, 最小 {MIN_GB}GB)", file=sys.stderr)
+          f"(上限 {a.max_yen_per_gb}円/GB, 最小 {a.min_gb}GB)", file=sys.stderr)
     if not fresh:
         if not a.all:
             save_seen(seen | {h["id"] for h in hits})
