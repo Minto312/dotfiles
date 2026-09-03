@@ -79,15 +79,15 @@ preflight() {
 
 # ---------------------------------------------------------------- phase A: reap
 
-finalize() { # fileId permId outcome extra...
-	local file_id=$1 perm_id=$2 outcome=$3
-	shift 3
+finalize() { # fileId permId outcome fileName jobId
+	local file_id=$1 perm_id=$2 outcome=$3 file_name=${4:-} job_id=${5:-}
 	if [ -n "$perm_id" ]; then
 		drive_unshare "$file_id" "$perm_id" || warn unshare_failed "file_id=$file_id" "perm_id=$perm_id"
 	fi
 	rm -f "$INFLIGHT_DIR/$file_id.json"
-	ledger_append "$(jq -nc --arg f "$file_id" --arg o "$outcome" \
-		--arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{at:$t,fileId:$f,outcome:$o}')"
+	# ⚠ jobId をここで残さないと、再送 (resend.sh) が「諦めた job が後から
+	#   届いていないか」を確かめられず、消せない重複会議を作ってしまう。
+	ledger_record "$file_id" "$file_name" "$outcome" "$job_id"
 }
 
 reap_one() { # inflight json path
@@ -113,14 +113,14 @@ reap_one() { # inflight json path
 		# (inflight を消したあとに inbox に残っていると次回に二重投入される)
 		drive_ensure_parent "$file_id" "$TLDV_DONE_FOLDER_ID" ||
 			warn move_failed "file_id=$file_id" "note=inbox に残っている可能性。手で done/ へ移す"
-		finalize "$file_id" "$perm_id" imported
+		finalize "$file_id" "$perm_id" imported "$file_name" "$job_id"
 		attempts_clear "$file_id"
 		return
 	fi
 
 	if [ "$age" -gt "$IMPORT_TIMEOUT" ]; then
 		err import_timeout "$(q file "$file_name")" "file_id=$file_id" "job_id=$job_id" "age=${age}s"
-		finalize "$file_id" "$perm_id" timeout
+		finalize "$file_id" "$perm_id" timeout "$file_name" "$job_id"
 		drive_ensure_parent "$file_id" "$TLDV_FAILED_FOLDER_ID" ||
 			warn move_failed "file_id=$file_id"
 		return
@@ -145,6 +145,9 @@ reject() { # fileId fileName reason
 	drive_move "$1" "$TLDV_INBOX_FOLDER_ID" "$TLDV_FAILED_FOLDER_ID" ||
 		warn move_failed "file_id=$1"
 	attempts_clear "$1"
+	# failed/ を見ただけでは「再送すれば通るのか、直しても通らないのか」が
+	# 分からない。理由を台帳に残して resend.sh の一覧に出す。
+	ledger_record "$1" "$2" rejected "" "$3"
 }
 
 submit_one() { # fileId fileName size createdTime

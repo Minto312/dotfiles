@@ -216,16 +216,31 @@ tldv_import() { # name url happenedAt -> jobId (空なら失敗)
 
 # import の jobId は取り込み後の meeting の extraProperties.conferenceId に入る (実測)。
 # 名前一致より確実なのでこれで完了を検知する。
+#
+# ⚠ 1 ページ (100 件) で足りるとは限らない。再送 (resend.sh) の重複チェックは
+#   数日前の createdTime から引くので、その間の会議が 100 件を超えうる。
+#   「見つからなかった」と「ページの外に居た」を混同しないよう pages を辿る。
+TLDV_MAX_PAGES=${TLDV_MAX_PAGES:-20}
 tldv_find_by_jobid() { # jobId fromDate(YYYY-MM-DD) -> meeting json or empty
-	local job=$1 from=$2 resp code
-	resp=$(tldv_curl GET "/meetings?page=1&limit=100&from=$from")
-	code=$(printf '%s' "$resp" | http_code)
-	if [ "$code" != "200" ]; then
-		warn meetings_http_error "http=$code"
-		return 1
-	fi
-	printf '%s' "$resp" | http_body |
-		jq -c --arg j "$job" '[.results[]? | select(.extraProperties.conferenceId == $j)][0] // empty'
+	local job=$1 from=$2 page=1 pages=1 resp code body hit
+	while [ "$page" -le "$pages" ] && [ "$page" -le "$TLDV_MAX_PAGES" ]; do
+		resp=$(tldv_curl GET "/meetings?page=$page&limit=100&from=$from")
+		code=$(printf '%s' "$resp" | http_code)
+		if [ "$code" != "200" ]; then
+			warn meetings_http_error "http=$code" "page=$page"
+			return 1
+		fi
+		body=$(printf '%s' "$resp" | http_body)
+		hit=$(printf '%s' "$body" |
+			jq -c --arg j "$job" '[.results[]? | select(.extraProperties.conferenceId == $j)][0] // empty')
+		if [ -n "$hit" ]; then
+			printf '%s' "$hit"
+			return 0
+		fi
+		pages=$(printf '%s' "$body" | jq -r '.pages // 1')
+		page=$((page + 1))
+	done
+	return 0
 }
 
 # ---------------------------------------------------------------- state
@@ -237,6 +252,24 @@ state_init() {
 
 ledger_append() { # json
 	printf '%s\n' "$1" >>"$LEDGER"
+}
+
+# 台帳の 1 行。
+# ⚠ outcome だけでは再送 (resend.sh) が「諦めた job が後から届いていないか」を
+#   確かめられない (jobId が要る) し、一覧にファイル名も出せない。必ずここを通す。
+ledger_record() { # fileId fileName outcome [jobId] [reason]
+	ledger_append "$(jq -nc \
+		--arg t "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--arg f "$1" --arg n "${2:-}" --arg o "$3" --arg j "${4:-}" --arg r "${5:-}" \
+		'{at:$t,fileId:$f,fileName:$n,outcome:$o}
+       + (if $j == "" then {} else {jobId:$j} end)
+       + (if $r == "" then {} else {reason:$r} end)')"
+}
+
+# 台帳から fileId の最終レコードを引く (無ければ空)
+ledger_last() { # fileId -> json or empty
+	[ -f "$LEDGER" ] || return 0
+	jq -c --arg f "$1" 'select(.fileId == $f)' "$LEDGER" 2>/dev/null | tail -n1
 }
 
 attempts_get() { # fileId
