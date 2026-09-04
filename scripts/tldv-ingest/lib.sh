@@ -21,6 +21,8 @@ TLDV_API=${TLDV_API:-https://pasta.tldv.io/v1alpha1}
 STATE_DIR=${TLDV_STATE_DIR:-$HOME/.local/state/tldv-ingest}
 INFLIGHT_DIR="$STATE_DIR/inflight"
 ATTEMPT_DIR="$STATE_DIR/attempts"
+HAPPENED_DIR="$STATE_DIR/happened"
+SPLIT_DIR="$STATE_DIR/split"
 LEDGER="$STATE_DIR/ledger.jsonl"
 # gws は本文が無いレスポンス (204) のとき cwd に download.html を書く。
 # 呼び出しは必ずこの捨てディレクトリで行い、作業ディレクトリを汚さない。
@@ -175,6 +177,41 @@ verify_public_media() { # url -> prints "http=<code> type=<ct>" ; rc 0 if媒体
 	esac
 }
 
+# ---------------------------------------------------------------- media
+
+# 公開 URL から尺だけを引く。
+# ⚠ 全部は落とさない — ffprobe は range 要求で moov atom だけを取るので、
+#   45MB の m4a で実測 1.3 MiB しか流れない (「バイト列が develop を通らない」
+#   という設計の性質をほぼ保てる)。
+media_duration() { # url -> 秒 (整数)。引けなければ rc 1
+	local d
+	command -v ffprobe >/dev/null 2>&1 || return 1
+	d=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null) || return 1
+	case "$d" in
+	'' | N/A | 0) return 1 ;;
+	esac
+	printf '%.0f' "$d"
+}
+
+# ローカルのファイルを Drive へ上げる。
+# ⚠ gws は --upload に cwd の外のパスを拒むので、置いてあるディレクトリに cd して呼ぶ。
+# ⚠ gws は .m4a を application/octet-stream として上げる。tl;dv が形式を何で
+#   判定しているかは不明なので、原本と同じ MIME に直しておく。
+drive_upload() { # localPath parentId [mimeType] -> fileId
+	local dir base out id
+	dir=$(cd "$(dirname "$1")" && pwd)
+	base=$(basename "$1")
+	out=$(cd "$dir" && "$GWS" drive +upload "./$base" --parent "$2" 2>/dev/null)
+	id=$(printf '%s' "$out" | jq -r '.id // empty')
+	[ -n "$id" ] || return 1
+	if [ -n "${3:-}" ]; then
+		gws_drive files update \
+			--params "$(jq -nc --arg i "$id" '{fileId:$i,fields:"id"}')" \
+			--json "$(jq -nc --arg m "$3" '{mimeType:$m}')" >/dev/null 2>&1 || true
+	fi
+	printf '%s' "$id"
+}
+
 # ---------------------------------------------------------------- tl;dv API
 
 tldv_curl() { # method path [data]
@@ -246,7 +283,7 @@ tldv_find_by_jobid() { # jobId fromDate(YYYY-MM-DD) -> meeting json or empty
 # ---------------------------------------------------------------- state
 
 state_init() {
-	mkdir -p "$INFLIGHT_DIR" "$ATTEMPT_DIR" "$SCRATCH_DIR"
+	mkdir -p "$INFLIGHT_DIR" "$ATTEMPT_DIR" "$SCRATCH_DIR" "$HAPPENED_DIR"
 	touch "$LEDGER"
 }
 
@@ -285,6 +322,21 @@ attempts_bump() { # fileId
 
 attempts_clear() { # fileId
 	rm -f "$ATTEMPT_DIR/$1"
+}
+
+# 分割した断片に「元の録音の日時」を引き継ぐための控え。
+# 🔴 Drive の createdTime は書き換えられない (files.update が fieldNotWritable を
+#   返す) ので、断片の happenedAt は放っておくと「アップロードした時刻」になり、
+#   tl;dv 上で時系列が崩れる。投入時にここを見て上書きする。
+happened_set() { # fileId isoTime
+	mkdir -p "$HAPPENED_DIR"
+	printf '%s' "$2" >"$HAPPENED_DIR/$1"
+}
+happened_get() { # fileId -> isoTime or empty
+	cat "$HAPPENED_DIR/$1" 2>/dev/null || true
+}
+happened_clear() { # fileId
+	rm -f "$HAPPENED_DIR/$1"
 }
 
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }

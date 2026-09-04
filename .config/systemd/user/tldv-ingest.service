@@ -12,9 +12,13 @@ Type=oneshot
 #   ~/.nvm/versions/node/*/bin/gws を glob して自力で解決する (GWS_BIN でも上書き可)。
 Environment=PATH=%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ExecStart=%h/dotfiles/scripts/tldv-ingest/ingest.sh
-# 1 本あたり Drive の権限操作 + import + 完了確認。GB 級でも develop はバイト列を
+# 1 本あたり Drive の権限操作 + import + 完了確認。ふだん develop はバイト列を
 # 運ばない (tl;dv が Google から直接取る) ので、待つのはメタデータの往復だけ。
-TimeoutStartSec=4min
+# ⚠ ただし 3 時間超の音声を分割するときだけは原本を落として ffmpeg で切って
+#   上げ直すので、ここだけ時間を食う (95MB 2 分割で実測 約 40 秒)。4 分では
+#   長尺が重なると足りないので余裕を持たせる。時間切れの TERM で公開が残らない
+#   ことは ingest.sh 側の trap で担保している。
+TimeoutStartSec=15min
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
