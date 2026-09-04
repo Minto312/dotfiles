@@ -33,6 +33,9 @@ MAX_PER_RUN=${TLDV_MAX_PER_RUN:-3}
 MAX_ATTEMPTS=${TLDV_MAX_ATTEMPTS:-3}
 GRACE_SECONDS=${TLDV_GRACE_SECONDS:-90}
 IMPORT_TIMEOUT=${TLDV_IMPORT_TIMEOUT:-3600}
+# 🔴 これを超える尺は tl;dv が沈黙して取り込まない (実測: 145 分は通り 190 分は
+#    落ちる)。既定は「実際に通ったいちばん長い尺」に置いてある。
+MAX_DURATION=${TLDV_MAX_DURATION:-8700}
 
 setup_gws
 state_init
@@ -42,6 +45,42 @@ if ! flock -n 9; then
 	info skipped reason=already_running
 	exit 0
 fi
+
+# 分割の作業ディレクトリは 1 実行の中でしか使わない (flock で同時実行はしない)。
+# ⚠ SIGKILL では trap も走らないので、開始時にも消しておく — / が逼迫している
+#   のに原本 + 断片ぶんが残り続けるのは避けたい。
+rm -rf "$SPLIT_DIR"
+
+# 🔴 投入の途中で落ちるとファイルが公開のまま残る。実際に踏んだ (分割の空き容量
+#    チェックが df の指定ミスで死に、共有を足した直後で止まった)。この仕組みは
+#    「公開ウィンドウが数分で閉じる」ことが前提なので、開けっぱなしは最悪の壊れ方。
+#    今まさにこちらが公開している 1 件を控え、どう終わっても必ず剥がす。
+SHARED_FILE=''
+SHARED_PERM=''
+mark_shared() { # fileId permId
+	SHARED_FILE=$1
+	SHARED_PERM=$2
+}
+# 剥がし終えた / inflight に引き継いだので、もう見張らなくてよい
+release_shared() {
+	SHARED_FILE=''
+	SHARED_PERM=''
+}
+cleanup_share() {
+	rm -rf "$SPLIT_DIR"
+	[ -n "$SHARED_FILE" ] || return 0
+	warn unshare_on_exit "file_id=$SHARED_FILE" "perm_id=$SHARED_PERM" \
+		"note=処理が途中で終わったので公開を剥がす"
+	drive_unshare "$SHARED_FILE" "$SHARED_PERM" || true
+	release_shared
+}
+# ⚠ EXIT trap だけでは SIGTERM で走らない。systemd は TimeoutStartSec を超えると
+#   TERM を送ってくる (分割はダウンロード + ffmpeg + アップロードで時間を食う) ので、
+#   TERM / INT / HUP も捕まえないと「時間切れで殺されて公開が残る」が起きる。
+trap cleanup_share EXIT
+trap 'cleanup_share; exit 143' TERM
+trap 'cleanup_share; exit 130' INT
+trap 'cleanup_share; exit 129' HUP
 
 # ---------------------------------------------------------------- preflight
 
@@ -145,14 +184,85 @@ reject() { # fileId fileName reason
 	drive_move "$1" "$TLDV_INBOX_FOLDER_ID" "$TLDV_FAILED_FOLDER_ID" ||
 		warn move_failed "file_id=$1"
 	attempts_clear "$1"
+	happened_clear "$1"
 	# failed/ を見ただけでは「再送すれば通るのか、直しても通らないのか」が
 	# 分からない。理由を台帳に残して resend.sh の一覧に出す。
 	ledger_record "$1" "$2" rejected "" "$3"
 }
 
-submit_one() { # fileId fileName size createdTime
-	local file_id=$1 file_name=$2 size=$3 created=$4
-	local perm_id='' shared_by_us=0 url probe job name attempts
+# 🔴 約 3 時間を超える音声は tl;dv が沈黙して取り込まない
+#    (import は 200 と jobId を返すのに会議が永久に現れない。services/tldv-ingest.md)。
+#    投入前に分割する。**ここだけはバイト列が develop を通る**。
+split_one() { # fileId fileName url duration mimeType createdTime -> 0 なら断片を inbox に置いた
+	local file_id=$1 file_name=$2 url=$3 dur=$4 mime=$5 created=$6
+	local base ext parts chunk i work part new_id src rc=1 need avail epoch
+
+	if ! command -v ffmpeg >/dev/null 2>&1; then
+		err split_unavailable "$(q file "$file_name")" "file_id=$file_id" "dur=${dur}s" \
+			"note=ffmpeg が無いので分割できない"
+		return 1
+	fi
+
+	ext=${file_name##*.}
+	base=${file_name%.*}
+	parts=$(((dur + MAX_DURATION - 1) / MAX_DURATION))
+	chunk=$(((dur + parts - 1) / parts))
+	work="$SPLIT_DIR/$file_id"
+	src="$work/src.$ext"
+
+	# ⚠ / が逼迫しているので、原本 + 断片ぶんの空きを先に確かめる (無いと途中で死ぬ)
+	need=$(curl -sSI -L --max-time 60 "$url" 2>/dev/null |
+		tr -d '\r' | awk -F': ' 'tolower($1)=="content-length"{n=$2} END{print n+0}')
+	avail=$(($(df -k --output=avail "$STATE_DIR" | tail -1) * 1024))
+	if [ "$need" -gt 0 ] && [ "$avail" -lt $((need * 3)) ]; then
+		err split_no_space "$(q file "$file_name")" "file_id=$file_id" \
+			"need=$((need * 3))" "avail=$avail"
+		return 1
+	fi
+
+	rm -rf "$work"
+	mkdir -p "$work"
+
+	if curl -sS -L --max-time 1800 -o "$src" "$url"; then
+		rc=0
+		for i in $(seq 1 "$parts"); do
+			part="$work/${base}_${i}of${parts}.${ext}"
+			# -c copy なので再エンコードしない (音質は原本のまま)
+			if ! ffmpeg -v error -ss "$(((i - 1) * chunk))" -t "$chunk" -i "$src" \
+				-c copy -avoid_negative_ts make_zero "$part" 2>/dev/null; then
+				err split_failed "$(q file "$file_name")" "file_id=$file_id" "part=$i/$parts"
+				rc=1
+				break
+			fi
+			new_id=$(drive_upload "$part" "$TLDV_INBOX_FOLDER_ID" "$mime") || new_id=''
+			if [ -z "$new_id" ]; then
+				err split_upload_failed "$(q file "$file_name")" "part=$i/$parts"
+				rc=1
+				break
+			fi
+			# 元の録音日時 + 断片の開始位置を控える (createdTime は書き換えられない)
+			epoch=$(date -u -d "$created" +%s 2>/dev/null || printf '')
+			if [ -n "$epoch" ]; then
+				happened_set "$new_id" \
+					"$(date -u -d "@$((epoch + (i - 1) * chunk))" +%Y-%m-%dT%H:%M:%S.000Z)"
+			fi
+			info split_part "$(q file "$(basename "$part")")" "file_id=$new_id" \
+				"part=$i/$parts" "seconds=$chunk"
+		done
+	else
+		err split_download_failed "$(q file "$file_name")" "file_id=$file_id"
+	fi
+
+	rm -rf "$work"
+	[ "$rc" -eq 0 ] || return 1
+	info split "$(q file "$file_name")" "file_id=$file_id" "dur=${dur}s" "parts=$parts" \
+		"note=断片を inbox に置いた。次の実行で投入される"
+	return 0
+}
+
+submit_one() { # fileId fileName size createdTime mimeType
+	local file_id=$1 file_name=$2 size=$3 created=$4 mime=${5:-}
+	local perm_id='' shared_by_us=0 url probe job name attempts dur happened
 
 	if ! ext_supported "$file_name"; then
 		reject "$file_id" "$file_name" "unsupported_extension (対応: $SUPPORTED_EXT)"
@@ -178,6 +288,7 @@ submit_one() { # fileId fileName size createdTime
 			return
 		fi
 		shared_by_us=1
+		mark_shared "$file_id" "$perm_id"
 	fi
 
 	url=$(public_media_url "$file_id")
@@ -186,14 +297,41 @@ submit_one() { # fileId fileName size createdTime
 	#    未認証で確かめてから tl;dv に渡す。
 	if ! probe=$(verify_public_media "$url"); then
 		[ "$shared_by_us" -eq 1 ] && { drive_unshare "$file_id" "$perm_id" || true; }
+		release_shared
 		attempts_bump "$file_id" >/dev/null
 		err probe_failed "$(q file "$file_name")" "file_id=$file_id" "$probe"
 		return
 	fi
 
+	# 🔴 尺が長すぎるものは投入せず分割する (投入しても沈黙で失敗するだけ)
+	if dur=$(media_duration "$url"); then
+		if [ "$dur" -gt "$MAX_DURATION" ]; then
+			if split_one "$file_id" "$file_name" "$url" "$dur" "$mime" "$created"; then
+				[ "$shared_by_us" -eq 1 ] && { drive_unshare "$file_id" "$perm_id" || true; }
+				release_shared
+				drive_move "$file_id" "$TLDV_INBOX_FOLDER_ID" "$TLDV_DONE_FOLDER_ID" ||
+					warn move_failed "file_id=$file_id"
+				ledger_record "$file_id" "$file_name" split
+				attempts_clear "$file_id"
+				return
+			fi
+			[ "$shared_by_us" -eq 1 ] && { drive_unshare "$file_id" "$perm_id" || true; }
+			release_shared
+			reject "$file_id" "$file_name" "too_long=${dur}s (分割できなかった)"
+			return
+		fi
+	else
+		warn duration_unknown "$(q file "$file_name")" "file_id=$file_id" \
+			"note=尺を確認できないので長さの判定を飛ばす"
+	fi
+
 	name=${file_name%.*}
-	if ! job=$(tldv_import "$name" "$url" "$created"); then
+	# 分割の断片は createdTime が「上げた時刻」なので、控えてある元の日時を使う
+	happened=$(happened_get "$file_id")
+	[ -n "$happened" ] || happened=$created
+	if ! job=$(tldv_import "$name" "$url" "$happened"); then
 		[ "$shared_by_us" -eq 1 ] && { drive_unshare "$file_id" "$perm_id" || true; }
+		release_shared
 		attempts_bump "$file_id" >/dev/null
 		err import_failed "$(q file "$file_name")" "file_id=$file_id" "attempts=$((attempts + 1))"
 		return
@@ -201,6 +339,7 @@ submit_one() { # fileId fileName size createdTime
 
 	if [ "${TLDV_DRY_RUN:-false}" = "true" ]; then
 		[ "$shared_by_us" -eq 1 ] && { drive_unshare "$file_id" "$perm_id" || true; }
+		release_shared
 		info dry_run_ok "$(q file "$file_name")" "file_id=$file_id" "job_id=$job" \
 			"size=$size" "$probe" "note=ファイルは inbox に残す"
 		return
@@ -210,10 +349,13 @@ submit_one() { # fileId fileName size createdTime
 		--arg p "${perm_id:-}" --argjson s "$(date +%s)" --arg sz "$size" \
 		'{fileId:$f,fileName:$n,jobId:$j,permissionId:$p,submittedAt:$s,size:$sz}' \
 		>"$INFLIGHT_DIR/$file_id.json"
+	# ここから先は刈り取りフェーズが公開の解除を担当する
+	release_shared
 
 	drive_move "$file_id" "$TLDV_INBOX_FOLDER_ID" "$TLDV_DONE_FOLDER_ID" ||
 		warn move_failed "file_id=$file_id" "note=次回実行で二重投入しないよう inflight で抑止済み"
 
+	happened_clear "$file_id"
 	info submitted "$(q file "$file_name")" "file_id=$file_id" "job_id=$job" \
 		"size=$size" "$probe"
 }
@@ -254,7 +396,8 @@ submit_new() {
 			continue
 		fi
 		count=$((count + 1))
-		submit_one "$file_id" "$file_name" "$size" "$created" || warn submit_failed "file_id=$file_id"
+		submit_one "$file_id" "$file_name" "$size" "$created" "$mime" ||
+			warn submit_failed "file_id=$file_id"
 	done < <(printf '%s' "$listing" |
 		jq -r '.files[]? | [.id,.name,.mimeType,(.size//"null"),.createdTime,.modifiedTime] | @tsv')
 }
