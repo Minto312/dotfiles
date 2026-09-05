@@ -37,6 +37,8 @@ Description=headplane: hs-server:3000 を develop の 127.0.0.1:$PORT に出す
 Documentation=file://$HOME/workspace/machine/services/headscale.md
 After=network-online.target docker.service
 Wants=network-online.target
+# 失敗が続いても諦めない (raim-tailnet-proxy の復帰待ち)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -47,8 +49,6 @@ ExecStart=/usr/bin/ssh -N -o BatchMode=yes -o ControlPath=none \\
   -L 127.0.0.1:$PORT:$HS_IP:3000 hs-server
 Restart=always
 RestartSec=15s
-# 失敗が続いても諦めない (proxy 復帰待ち)
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target
@@ -60,6 +60,8 @@ Description=headplane: develop の 127.0.0.1:$PORT を lenovo の localhost:$POR
 Documentation=file://$HOME/workspace/machine/dev/lenovo-tunnel.md
 After=network-online.target headplane-forward.service
 Wants=network-online.target headplane-forward.service
+# lenovo が落ちている間は失敗し続けるので諦めさせない
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -69,7 +71,6 @@ ExecStart=$SCRIPT_DIR/lenovo-tunnel keep $PORT
 Restart=always
 # lenovo はノート PC なので落ちている時間が長い。復帰待ちの間隔は広めに取る。
 RestartSec=60s
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=default.target
