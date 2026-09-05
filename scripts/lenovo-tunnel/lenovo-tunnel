@@ -199,10 +199,80 @@ cmd_open() {
 		|| die "$CLIENT_HOST でブラウザを開けなかった"
 }
 
+# logfmt を stdout に出す (journald → Alloy → VictoriaLogs)。判定は Grafana Alerting の担当。
+emit() {
+	printf 'level=%s event=lenovo_tunnel client=%s lport=%s dport=%s msg="%s"\n' \
+		"$1" "$CLIENT_HOST" "$2" "$3" "$4"
+}
+
+KEEP_PID=""
+keep_cleanup() { [ -n "$KEEP_PID" ] && kill "$KEEP_PID" 2>/dev/null; true; }
+keep_term()    { keep_cleanup; exit 0; }
+
+# 常設トンネル。**前景に留まる**ので systemd の Restart=always に監視させる。
+#
+# cmd_up との違いは 2 つだけで、どちらも「常設だから」という理由:
+#   - 🔴 衝突しても振り替えない。ポート番号が動くと参照側 (homepage のリンク等) が黙って壊れる
+#   - 検証に失敗したら 0 以外で終わる。systemd に再試行させる
+cmd_keep() {
+	[ $# -eq 1 ] || die "usage: lenovo-tunnel keep <port>[:<develop側port>]"
+	local spec=$1 lp dp
+	case "$spec" in
+		*:*) lp=${spec%%:*}; dp=${spec#*:} ;;
+		*)   lp=$spec; dp=$spec ;;
+	esac
+	[[ "$lp" =~ ^[0-9]+$ && "$dp" =~ ^[0-9]+$ ]] || die "ポート指定が不正: $spec"
+
+	# 🔴 事前検査。Windows の sshd は bind 失敗を報告しないので、使用中なら張らない。
+	# ⚠ 直前の ssh が残した listen はすぐには消えないので数回待つ。
+	local remote i=0
+	while :; do
+		remote=$(remote_listen_ports)
+		if [ -z "$remote" ]; then
+			emit warn "$lp" "$dp" "listen 一覧を取得できない (電源が入っていない可能性)"
+			return 1
+		fi
+		printf '%s\n' "$remote" | grep -qx "$lp" || break
+		i=$((i + 1))
+		if [ "$i" -ge 5 ]; then
+			emit error "$lp" "$dp" "$lp は他プロセスが使用中。奪わずに諦める"
+			return 1
+		fi
+		sleep 3
+	done
+
+	ssh -N -o BatchMode=yes -o ConnectTimeout=10 -o ControlPath=none \
+		-o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+		-R "$lp:127.0.0.1:$dp" "$CLIENT_HOST" &
+	KEEP_PID=$!
+	# ⚠ trap EXIT だけでは systemd stop (SIGTERM) で走らない
+	trap keep_cleanup EXIT
+	trap keep_term TERM INT HUP
+
+	# 🔴 事後検証。rc は当てにならないので lenovo の listen を実地で見る。
+	sleep 6
+	if ! kill -0 "$KEEP_PID" 2>/dev/null; then
+		emit error "$lp" "$dp" "ssh が即座に終了した"
+		return 1
+	fi
+	if ! remote_listen_ports | grep -qx "$lp"; then
+		emit error "$lp" "$dp" "listen が現れない (bind 失敗が報告されていない)"
+		keep_cleanup
+		return 1
+	fi
+	emit info "$lp" "$dp" "確立"
+
+	local rc=0
+	wait "$KEEP_PID" || rc=$?
+	emit warn "$lp" "$dp" "切断された (ssh rc=$rc)"
+	return 1
+}
+
 case "${1:-list}" in
 	up)   shift; cmd_up "$@" ;;
+	keep) shift; cmd_keep "$@" ;;
 	down) shift; cmd_down "$@" ;;
 	open) shift; cmd_open "$@" ;;
 	list) cmd_list ;;
-	*) die "usage: lenovo-tunnel {up <port>...|down <port>...|--all|open <port> [path]|list}" ;;
+	*) die "usage: lenovo-tunnel {up <port>...|keep <port>|down <port>...|--all|open <port> [path]|list}" ;;
 esac
