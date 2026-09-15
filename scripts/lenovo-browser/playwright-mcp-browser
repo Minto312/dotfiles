@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# playwright-mcp-browser — Playwright MCP を「使えるブラウザ」に繋ぐ
+#
+# ~/.claude.json の mcpServers.playwright.command をこれに差し替えて使う。
+# 既定は lenovo (人間が画面を直接見て触れる方) で、繋がらないときだけ develop の
+# 共有ブラウザ (shared-browser) に落ちる。
+#
+# ⚠ MCP はセッション開始時に 1 度だけ起動するので、ここで決めた行き先はセッション中
+#   固定される。起動時にどちらも動いていなければ lenovo を選ぶ (使う直前に
+#   `lenovo-browser up` を叩けばそのまま繋がる)。
+# ⚠ どちらのブラウザも「起動していなくても MCP は起動する」。ツールを呼んだときだけ
+#   ECONNREFUSED になるので、枠だけ取って Chrome をぶら下げないでいられる。
+# ⚠ stdout は JSON-RPC の通り道なので、ここから余計な出力を混ぜない。
+set -euo pipefail
+
+# ⚠ symlink 経由で呼ばれるので readlink -f を通す (素の dirname だと ~/.local/bin を指す)
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+SHARED=${SHARED_BROWSER_BIN:-$HOME/dotfiles/scripts/shared-browser/shared-browser}
+
+alive() { curl -fsS --max-time 2 "http://127.0.0.1:$1/json/version" >/dev/null 2>&1; }
+
+pick_port() {
+	local lenovo shared
+	lenovo=$("$HERE/lenovo-browser" port 2>/dev/null || echo 9333)
+
+	# 1. lenovo が既に開いていればそれ (shared-browser のスロットを消費しない)
+	alive "$lenovo" && { echo "$lenovo"; return; }
+
+	# 2. develop 側の共有ブラウザが開いていればそちらへ落ちる
+	#    ⚠ `shared-browser port` はスロットを予約する副作用がある。lenovo が生きて
+	#      いるときは呼ばれないので、枠の消費は lenovo が使えないときだけ。
+	if [ -x "$SHARED" ]; then
+		shared=$("$SHARED" port 2>/dev/null | tr -cd '0-9') || shared=""
+		[ -n "$shared" ] && alive "$shared" && { echo "$shared"; return; }
+	fi
+
+	# 3. どちらも起きていないなら lenovo を既定にする
+	echo "$lenovo"
+}
+
+port=$(pick_port)
+[ "${PLAYWRIGHT_MCP_DRYRUN:-}" = "1" ] && { echo "http://127.0.0.1:$port"; exit 0; }
+exec npx -y @playwright/mcp@latest --cdp-endpoint "http://127.0.0.1:$port" "$@"

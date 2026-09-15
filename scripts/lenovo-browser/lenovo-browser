@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# lenovo-browser — lenovo (Windows) の CDP 付き Chrome を develop から使う
+#
+# 人間が自分の画面で直接見て触れるブラウザをエージェントに渡すための配管。
+# develop の shared-browser (Xvfb + x11vnc + noVNC) の置き換えで、ログイン・IME・
+# ダウンロード・拡張・フォントが「普段使っているマシンのまま」効く。
+#
+#   lenovo-browser up      Chrome を起こしトンネルを張る (冪等)
+#   lenovo-browser port    ローカルの CDP ポートだけ出す (何も起こさない)
+#   lenovo-browser status  今の状態
+#   lenovo-browser down    トンネルを閉じ CDP 用 Chrome だけ終了する
+#
+# 🔴 Chrome はスケジュールタスク経由でしか起こせない。ssh から Start-Process で
+#    直に起動すると Windows の sshd が SSH セッション終了時に子プロセスごと殺す
+#    (2026-09-15 実測: 起動直後は listen するが SSH を抜けると消えていた)。
+# 🔴 CDP は lenovo の 127.0.0.1 にしか bind しないので SSH のローカル転送が要る。
+# 🔴 プロファイルは既定の User Data とは別にする。Chrome 136 以降、既定の
+#    プロファイルディレクトリでは --remote-debugging-port が黙って無視される。
+# ⚠ Chrome は 1 つ = 全セッションで共有する。shared-browser のようなセッション
+#    ごとの分離は無いので、並行して別のセッションが同じタブを触りうる。
+set -euo pipefail
+
+HOST=${LENOVO_BROWSER_HOST:-lenovo}
+TASK=${LENOVO_BROWSER_TASK:-cdp-chrome}
+REMOTE_PORT=${LENOVO_BROWSER_REMOTE_PORT:-9222}
+LOCAL_PORT=${LENOVO_BROWSER_LOCAL_PORT:-9333}
+PROFILE_MARK=${LENOVO_BROWSER_PROFILE_MARK:-cdp-chrome-profile}
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=10)
+
+die() { echo "$*" >&2; exit 1; }
+
+# PowerShell へは UTF-16LE + base64 で渡す。SSH を挟むと引用が何段も壊れるので、
+# 文字列をそのまま渡さない (Chrome を落とす処理を引用ミスで撃ちたくない)。
+# ⚠ 先頭で OutputEncoding を UTF-8 にしないと戻りが CP932 になって develop 側で化ける。
+ps_run() {
+	local enc
+	enc=$(printf '%s\n%s' '[Console]::OutputEncoding = [Text.Encoding]::UTF8' "$1" |
+		iconv -f UTF-8 -t UTF-16LE | base64 -w0)
+	ssh "${SSH_OPTS[@]}" "$HOST" "powershell -NoProfile -EncodedCommand $enc" 2>/dev/null
+}
+
+# ⚠ pgrep -f は自分自身のコマンドラインに一致するので使わない。listen から引く。
+tunnel_pid() {
+	ss -ltnpH "sport = :$LOCAL_PORT" 2>/dev/null |
+		grep -oP 'pid=\K[0-9]+' | head -1 || true
+}
+
+cdp_ok() { curl -fsS --max-time 3 "http://127.0.0.1:$LOCAL_PORT/json/version" >/dev/null 2>&1; }
+
+cdp_browser() {
+	curl -fsS --max-time 3 "http://127.0.0.1:$LOCAL_PORT/json/version" 2>/dev/null |
+		python3 -c 'import json,sys; print(json.load(sys.stdin).get("Browser","?"))' 2>/dev/null || true
+}
+
+tunnel_up() {
+	[ -n "$(tunnel_pid)" ] && return 0
+	ssh -f -N "${SSH_OPTS[@]}" -o ExitOnForwardFailure=yes \
+		-L "127.0.0.1:$LOCAL_PORT:127.0.0.1:$REMOTE_PORT" "$HOST" 2>/dev/null ||
+		die "トンネルを張れない: ssh $HOST が通らないか $LOCAL_PORT が使用中"
+}
+
+chrome_start() {
+	# 既に Running なら Start-ScheduledTask は何もしない (冪等)
+	ps_run "Start-ScheduledTask -TaskName '$TASK'" >/dev/null ||
+		die "スケジュールタスク $TASK を起動できない ($HOST にログオンしていない可能性)"
+}
+
+cmd_up() {
+	if cdp_ok; then
+		echo "既に使える: http://127.0.0.1:$LOCAL_PORT  ($(cdp_browser))"
+		return 0
+	fi
+	chrome_start
+	tunnel_up
+	for _ in $(seq 1 30); do
+		cdp_ok && { echo "CDP: http://127.0.0.1:$LOCAL_PORT  ($(cdp_browser))"; return 0; }
+		sleep 1
+	done
+	die "CDP が開かない。lenovo がログオン中か、$TASK の --user-data-dir が既定の User Data になっていないか確認する"
+}
+
+cmd_down() {
+	local pid
+	pid=$(tunnel_pid)
+	[ -n "$pid" ] && { kill "$pid" && echo "トンネルを停止 (pid $pid)"; } || echo "トンネルは無し"
+	# 🔴 普段使いの Chrome を巻き込まないよう、プロファイルのパスで厳密に絞る
+	ps_run "
+\$n = 0
+Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" |
+  Where-Object { \$_.CommandLine -like '*$PROFILE_MARK*' } |
+  ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue; \$n++ }
+\"stopped=\$n\"
+"
+}
+
+cmd_status() {
+	local pid; pid=$(tunnel_pid)
+	echo "ローカル CDP  : http://127.0.0.1:$LOCAL_PORT"
+	echo "トンネル      : ${pid:-なし}"
+	echo "CDP の応答    : $(cdp_ok && cdp_browser || echo なし)"
+	ps_run "
+\$t = Get-ScheduledTask -TaskName '$TASK' -ErrorAction SilentlyContinue
+\"タスク        : \" + \$(if (\$t) { \$t.State } else { '未登録' })
+\$c = @(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | Where-Object { \$_.CommandLine -like '*$PROFILE_MARK*' })
+\"CDP 用 Chrome : \" + \$c.Count + ' プロセス'
+\$l = @(Get-NetTCPConnection -State Listen -LocalPort $REMOTE_PORT -ErrorAction SilentlyContinue)
+\"lenovo:$REMOTE_PORT  : \" + \$(if (\$l.Count) { 'listen' } else { 'なし' })
+" || echo "タスク        : (ssh $HOST に繋がらない)"
+}
+
+case "${1:-status}" in
+up) cmd_up ;;
+down) cmd_down ;;
+status) cmd_status ;;
+port) echo "$LOCAL_PORT" ;;
+*) die "使い方: lenovo-browser {up|down|status|port}" ;;
+esac
