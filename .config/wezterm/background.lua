@@ -8,7 +8,7 @@ return {
         -- サイドバーの背景は「外側ターミナルの背景」= この壁紙そのものになる。
         -- この壁紙は左端 (= サイドバーが乗る帯) が一番明るく、輝度 136〜255 ある。
         -- brightness で画像だけを落とし、下地の明暗差を潰す。1.0 = 元の明るさ。
-        hsb = {hue = 1.0, saturation = 1.0, brightness = 0.25}
+        hsb = {hue = 1.0, saturation = 1.0, brightness = 0.15}
     }, {
         source = {
             Gradient = {
