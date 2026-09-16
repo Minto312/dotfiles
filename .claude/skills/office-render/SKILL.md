@@ -75,8 +75,10 @@ python3 ~/.claude/skills/office-render/scripts/render.py sheet.xlsx --format png
 
 ## 前提・トラブルシュート
 
-- **`ssh lenovo` が通ること**が大前提。`echo %USERPROFILE%` から失敗する場合は Windows 機の電源・ネットワーク・SSH 設定を確認（勝手にリトライを続けない）。
-- `--host` で別ホストを指定する場合、**その Windows 機に `pwsh` (PowerShell 7) が PATH 上にあり、SSH 既定シェルが cmd** であること（`%USERPROFILE%` 展開・`mkdir`・`rmdir /s /q` を前提にしている）。既定シェルが PowerShell だと `%USERPROFILE%` が展開できず明示エラーで停止する。
+- **`ssh lenovo` が通ること**が大前提。`$env:USERPROFILE` の取得から失敗する場合は Windows 機の電源・ネットワーク・SSH 設定を確認（勝手にリトライを続けない）。
+- `--host` で別ホストを指定する場合、**その Windows 機の PATH 上に `pwsh` (PowerShell 7) がある**こと。
+  ✅ **SSH の既定シェルは cmd でも pwsh でもよい** — リモート操作は全て `pwsh -EncodedCommand` 経由なので、
+  ログインシェルの方言 (`%VAR%` 展開・`rmdir /s /q`) には依存しない。
 - lenovo には Office (COM: PowerPoint/Word/Excel) がインストール済みであること。バージョンは 16.0 (Office 2016+) で確認済み。
 - Word/Excel の PNG 化には develop 側の `pdftoppm`（poppler-utils）が必要。無ければ `--format pdf` を使う。
 - COM は SSH 経由の非対話セッションでも動作する（PowerPoint は `Visible` を立てず `WithWindow:=$false` で開く）。初回起動は数十秒かかることがある。

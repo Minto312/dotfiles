@@ -73,6 +73,18 @@ def ssh_capture(host, remote_cmd, timeout=300):
     return run(["ssh", "-o", "BatchMode=yes", host, remote_cmd], timeout=timeout)
 
 
+def ssh_ps(host, ps_snippet, timeout=300):
+    """Run a PowerShell snippet on the host, independent of its SSH default shell.
+
+    The Windows host's default shell may be cmd or pwsh, and cmd-only idioms
+    (%VAR% expansion, `rmdir /s /q`) silently change meaning between the two.
+    Sending the snippet as UTF-16LE base64 means no quoting survives the trip
+    and the behaviour is identical either way.
+    """
+    b64 = encode_ps("[Console]::OutputEncoding = [Text.Encoding]::UTF8\n" + ps_snippet)
+    return ssh_capture(host, f"pwsh -NoProfile -EncodedCommand {b64}", timeout=timeout)
+
+
 def scp(src, dst, recursive=False, timeout=600):
     cmd = ["scp", "-q", "-o", "BatchMode=yes"]
     if recursive:
@@ -231,16 +243,16 @@ def main():
     if not HOST_RE.match(host):
         die(f"invalid --host value {host!r} (allowed: letters, digits, . _ -)")
 
-    # discover remote user profile to build a work dir (assumes cmd default shell)
-    r = ssh_capture(host, "echo %USERPROFILE%", timeout=30)
+    # discover the remote user profile to build a work dir
+    r = ssh_ps(host, "$env:USERPROFILE", timeout=30)
     if r.returncode != 0 or not r.stdout.strip():
-        die(f"cannot reach host '{host}' via ssh: {r.stderr.strip() or r.stdout.strip()}")
+        die(f"cannot reach host '{host}' via ssh, or it has no `pwsh` on PATH: "
+            f"{r.stderr.strip() or r.stdout.strip()}")
     userprofile = r.stdout.strip().splitlines()[0].strip()
-    if "%USERPROFILE%" in userprofile or ":" not in userprofile:
-        die("remote %USERPROFILE% did not expand; this tool assumes a cmd default "
-            f"shell on the Windows host (got: {userprofile!r}).")
+    if ":" not in userprofile:
+        die(f"could not read $env:USERPROFILE on the host (got: {userprofile!r}).")
     job = f"{int(time.time())}-{os.getpid()}"
-    base_win = userprofile + r"\office-render\jobs" + "\\" + job     # backslash: cmd + PowerShell
+    base_win = userprofile + r"\office-render\jobs" + "\\" + job     # backslash: Windows native
     base_scp = base_win.replace("\\", "/")                           # forward slash: scp
     src_win = base_win + r"\input" + ext
     pdf_win = base_win + r"\out.pdf"
@@ -252,7 +264,8 @@ def main():
         if args.keep_remote:
             return
         try:
-            ssh_capture(host, f'rmdir /s /q "{base_win}"', timeout=30)
+            ssh_ps(host, f"Remove-Item -LiteralPath '{base_win}' -Recurse -Force "
+                         f"-ErrorAction SilentlyContinue", timeout=30)
         except Exception:
             pass  # best-effort; never mask the original error
 
@@ -261,7 +274,8 @@ def main():
     # SystemExit and any subprocess timeout).
     try:
         # 1. remote work dir + png subdir
-        r = ssh_capture(host, f'mkdir "{png_win}"', timeout=30)  # cmd mkdir makes parents
+        r = ssh_ps(host, f"New-Item -ItemType Directory -Force "
+                         f"-Path '{png_win}' | Out-Null", timeout=30)  # -Force makes parents
         if r.returncode != 0:
             die(f"failed to create remote work dir: {r.stderr.strip()}")
 
