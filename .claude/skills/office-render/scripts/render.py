@@ -6,7 +6,9 @@ Office (PowerPoint / Word / Excel) on the Windows machine reachable via SSH.
 Flow (all automated):
   1. Detect file type from extension.
   2. scp the source file to a per-job work dir on the Windows host.
-  3. Drive Office via COM (PowerShell, sent as -EncodedCommand so no quoting hell).
+  3. Drive Office via COM (pwsh 7, sent as -EncodedCommand so no quoting hell).
+     NOTE: it must be `pwsh`, not `powershell` -- the latter is Windows
+     PowerShell 5.1, which is what you get by default on the Windows host.
      - .ppt/.pptx  -> one PNG per slide (native, high fidelity) and/or a PDF.
      - .doc/.docx  -> PDF; PNG pages are rasterised locally from that PDF (poppler).
      - .xls/.xlsx  -> PDF (fit-to-width); PNG pages rasterised locally.
@@ -273,7 +275,7 @@ def main():
         ps = build_powershell(app, src_win, need_remote_pdf, pdf_win, want_png and native_png, png_win, args.width)
         b64 = encode_ps(ps)
         log("rendering with Office COM (this can take a while on first launch) ...")
-        r = ssh_capture(host, f"powershell -NoProfile -EncodedCommand {b64}", timeout=600)
+        r = ssh_capture(host, f"pwsh -NoProfile -EncodedCommand {b64}", timeout=600)
         stdout = r.stdout or ""
         if r.returncode != 0 or "RENDER_OK" not in stdout:
             # surface the PowerShell error (strip CLIXML noise)
