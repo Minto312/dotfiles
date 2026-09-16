@@ -20,10 +20,11 @@ XML を直接パースするより、まずこのスキルで PNG 化して Read
 
 ## 仕組み（重要）
 
-このマシン (develop, LXC) には Office が無い。代わりに **`ssh lenovo` で到達できる Windows 機**の Office を使う:
+このマシン (develop, Proxmox 上の VM) には Office が無い。代わりに **`ssh lenovo` で到達できる Windows 機**の Office を使う:
 
 1. 対象ファイルを `scp` で lenovo の一時作業ディレクトリへアップロード
-2. PowerShell (`-EncodedCommand` で UTF-16LE base64 送信) で Office を COM 操作
+2. **PowerShell 7 (`pwsh`)** に `-EncodedCommand` で UTF-16LE base64 を送って Office を COM 操作
+   (`powershell` と書くと Windows PowerShell 5.1 になる → machine/dev/powershell.md)
    - **PowerPoint**: スライドを 1 枚ずつ PNG に `Export` ＋ 必要なら PDF (`SaveAs 32`)
    - **Word**: `ExportAsFixedFormat 17` で PDF 化 → PNG は develop 側で `pdftoppm` によりラスタライズ
    - **Excel**: 各シートを fit-to-width にして `ExportAsFixedFormat 0` で PDF 化 → 同上
@@ -75,8 +76,9 @@ python3 ~/.claude/skills/office-render/scripts/render.py sheet.xlsx --format png
 ## 前提・トラブルシュート
 
 - **`ssh lenovo` が通ること**が大前提。`echo %USERPROFILE%` から失敗する場合は Windows 機の電源・ネットワーク・SSH 設定を確認（勝手にリトライを続けない）。
-- `--host` で別ホストを指定する場合、**その Windows 機の SSH 既定シェルが cmd** であること（`%USERPROFILE%` 展開・`mkdir`・`rmdir /s /q` を前提にしている）。既定シェルが PowerShell だと `%USERPROFILE%` が展開できず明示エラーで停止する。
+- `--host` で別ホストを指定する場合、**その Windows 機に `pwsh` (PowerShell 7) が PATH 上にあり、SSH 既定シェルが cmd** であること（`%USERPROFILE%` 展開・`mkdir`・`rmdir /s /q` を前提にしている）。既定シェルが PowerShell だと `%USERPROFILE%` が展開できず明示エラーで停止する。
 - lenovo には Office (COM: PowerPoint/Word/Excel) がインストール済みであること。バージョンは 16.0 (Office 2016+) で確認済み。
 - Word/Excel の PNG 化には develop 側の `pdftoppm`（poppler-utils）が必要。無ければ `--format pdf` を使う。
 - COM は SSH 経由の非対話セッションでも動作する（PowerPoint は `Visible` を立てず `WithWindow:=$false` で開く）。初回起動は数十秒かかることがある。
 - エラー時は PowerShell の例外メッセージを `RENDER_ERR …` として表示する。
+- 🔴 **`pwsh` でも SSH 越しの `[Console]::OutputEncoding` は CP932 のまま**なので、出力に日本語を載せるなら明示的に UTF-8 を指定する。

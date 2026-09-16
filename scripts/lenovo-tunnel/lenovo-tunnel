@@ -32,8 +32,9 @@ ssh_() {
 }
 
 # lenovo 側で listen しているポートを改行区切りで返す
+# 🔴 `pwsh` = PowerShell 7。`powershell` と書くと 5.1 → machine/dev/powershell.md
 remote_listen_ports() {
-	ssh_ 'powershell -NoProfile -Command "(Get-NetTCPConnection -State Listen | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique) -join \",\""' \
+	ssh_ 'pwsh -NoProfile -Command "(Get-NetTCPConnection -State Listen | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique) -join \",\""' \
 		2>/dev/null | tr -d '\r' | tr ',' '\n' | grep -E '^[0-9]+$' || true
 }
 
@@ -194,7 +195,7 @@ cmd_open() {
 	actual=$(current_forwards | awk -v d="$dp" '$3 == d { print $2; exit }')
 	[ -n "$actual" ] && lp=$actual
 	local url="http://localhost:$lp${path}"
-	ssh_ "powershell -NoProfile -Command \"Start-Process '$url'\"" >/dev/null 2>&1 \
+	ssh_ "pwsh -NoProfile -Command \"Start-Process '$url'\"" >/dev/null 2>&1 \
 		&& log "$CLIENT_HOST の既定ブラウザで開いた: $url" \
 		|| die "$CLIENT_HOST でブラウザを開けなかった"
 }

@@ -31,12 +31,15 @@ die() { echo "$*" >&2; exit 1; }
 
 # PowerShell へは UTF-16LE + base64 で渡す。SSH を挟むと引用が何段も壊れるので、
 # 文字列をそのまま渡さない (Chrome を落とす処理を引用ミスで撃ちたくない)。
-# ⚠ 先頭で OutputEncoding を UTF-8 にしないと戻りが CP932 になって develop 側で化ける。
+# 🔴 呼ぶのは `pwsh` (PowerShell 7)。`powershell` と書くと Windows PowerShell 5.1 に
+#    なる (別実行ファイルで side-by-side) → machine/dev/powershell.md
+# ⚠ pwsh 7 でも SSH 越しの [Console]::OutputEncoding は CP932 のままなので、
+#    先頭で UTF-8 にしないと戻りが develop 側で化ける。
 ps_run() {
 	local enc
 	enc=$(printf '%s\n%s' '[Console]::OutputEncoding = [Text.Encoding]::UTF8' "$1" |
 		iconv -f UTF-8 -t UTF-16LE | base64 -w0)
-	ssh "${SSH_OPTS[@]}" "$HOST" "powershell -NoProfile -EncodedCommand $enc" 2>/dev/null
+	ssh "${SSH_OPTS[@]}" "$HOST" "pwsh -NoProfile -EncodedCommand $enc" 2>/dev/null
 }
 
 # ⚠ pgrep -f は自分自身のコマンドラインに一致するので使わない。listen から引く。
