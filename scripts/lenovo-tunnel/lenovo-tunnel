@@ -31,10 +31,21 @@ ssh_() {
 	ssh -o BatchMode=yes -o ConnectTimeout=10 -o ControlPath=none "$CLIENT_HOST" "$@"
 }
 
+# PowerShell は UTF-16LE + base64 の -EncodedCommand で渡す。
+# 🔴 引用を素で渡さないこと — lenovo の SSH 既定シェルは pwsh (2026-09-16 に cmd から
+#    変更) で、cmd 用に書いた `\"` は pwsh では効かず**エラーも出さずに空を返す**
+#    (実際に listen 一覧が 0 件になり「衝突なし」と誤判定しかけた) → machine/dev/powershell.md
+ps_run() {
+	local enc
+	enc=$(printf '%s\n%s' '[Console]::OutputEncoding = [Text.Encoding]::UTF8' "$1" |
+		iconv -f UTF-8 -t UTF-16LE | base64 -w0)
+	ssh_ "pwsh -NoProfile -EncodedCommand $enc"
+}
+
 # lenovo 側で listen しているポートを改行区切りで返す
 # 🔴 `pwsh` = PowerShell 7。`powershell` と書くと 5.1 → machine/dev/powershell.md
 remote_listen_ports() {
-	ssh_ 'pwsh -NoProfile -Command "(Get-NetTCPConnection -State Listen | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique) -join \",\""' \
+	ps_run '(Get-NetTCPConnection -State Listen | Select-Object -ExpandProperty LocalPort | Sort-Object -Unique) -join ","' \
 		2>/dev/null | tr -d '\r' | tr ',' '\n' | grep -E '^[0-9]+$' || true
 }
 
@@ -195,7 +206,7 @@ cmd_open() {
 	actual=$(current_forwards | awk -v d="$dp" '$3 == d { print $2; exit }')
 	[ -n "$actual" ] && lp=$actual
 	local url="http://localhost:$lp${path}"
-	ssh_ "pwsh -NoProfile -Command \"Start-Process '$url'\"" >/dev/null 2>&1 \
+	ps_run "Start-Process '$url'" >/dev/null 2>&1 \
 		&& log "$CLIENT_HOST の既定ブラウザで開いた: $url" \
 		|| die "$CLIENT_HOST でブラウザを開けなかった"
 }
