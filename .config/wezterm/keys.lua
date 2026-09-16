@@ -14,12 +14,16 @@ return {
       end
     end),
   },
+  -- テキストのペーストは Ctrl+Shift+V (Linux 端末の慣例に合わせた)。
+  -- 🔴 Ctrl+V は wezterm 側で握らないこと。herdr --remote の
+  --    keys.remote_image_paste (既定 "ctrl+v") が生の Ctrl+V を受け取って、
+  --    手元のクリップボード画像を develop 側の一時ファイルに渡し、
+  --    そのパスをペインに入力する。wezterm が Ctrl+V を横取りすると
+  --    herdr まで届かず、画像ペーストが無言で効かなくなる。
   {
     key = 'v',
-    mods = 'CTRL',
-    action = wezterm.action_callback(function(window, pane)
-      window:perform_action(wezterm.action.PasteFrom('Clipboard'), pane)
-    end),
+    mods = 'CTRL|SHIFT',
+    action = wezterm.action.PasteFrom('Clipboard'),
   },
   -- Shift+Enter を Alt+Enter として送る (Claude Code の改行入力用)
   -- 端末は通常 Shift+Enter と Enter を区別しないため、別シーケンスに変換する
