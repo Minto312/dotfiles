@@ -38,4 +38,12 @@ config.background = require("background")
 -- キーバインド（クリップボード処理のみ）
 config.keys = require("keys")
 
+-- herdr の Windows クライアントが win32-input-mode (ESC[?9001h) を要求すると、
+-- wezterm は貼り付けを bracketed paste ではなくキーレコード列として送るようになり、
+-- Ctrl+Shift+V の Ctrl が改行の Enter に乗って ESC[27;5;13~ に化け、改行が消える。
+-- "win32" 以外を入れると herdr はこのモードを要求しない。
+config.set_environment_variables = {
+  HERDR_WINDOWS_INPUT_PROBE = "vt",
+}
+
 return config
