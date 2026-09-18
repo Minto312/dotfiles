@@ -49,3 +49,8 @@
 
 # --- restic 自身のキャッシュ ---
 /home/karinto/.cache/restic
+
+# --- root 所有で読めない。backup-root の TARGETS 側で拾っている ---
+# 🔴 これを外すときは backup-root.sh の TARGETS も一緒に見ること。
+#    先に除外だけ消すと rc=3 に戻り、アラートがまた永久に鳴る。
+/home/karinto/workspace/raim-tailnet-proxy/state

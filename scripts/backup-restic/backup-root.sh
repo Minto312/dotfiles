@@ -5,9 +5,14 @@
 # 対象:
 #   /etc                     ネットワーク・system unit・各種設定
 #   /var/lib/docker/volumes  🔴 Grafana の dashboard/alert/silence の唯一の実体
-#   /var/lib/tailscale       ノード鍵
+#   /var/lib/tailscale       ノード鍵 (develop 本体 = SaaS 側の tailnet)
 #   /var/spool/cron
 #   /root
+#   ~/workspace/raim-tailnet-proxy/state
+#     🔴 raim tailnet (headscale) の node key。コンテナの bind mount なので
+#        /var/lib/docker/volumes には入らず、中身が root 所有なので
+#        karinto で走る L1 (user) からも読めない。ここで拾わないと
+#        L1 でも L3 でもどこにも残らない (backup-develop.md §0.5)。
 #
 # 設計: machine/storage/backup-develop.md §4.2
 
@@ -25,7 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${KEEP_MONTHLY:=6}"
 export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_CACHE_DIR
 
-TARGETS=(/etc /var/lib/docker/volumes /var/lib/tailscale /var/spool/cron /root)
+TARGETS=(/etc /var/lib/docker/volumes /var/lib/tailscale /var/spool/cron /root
+         /home/karinto/workspace/raim-tailnet-proxy/state)
 
 RESTIC=/usr/local/bin/restic
 [ -x "$RESTIC" ] || RESTIC="$(command -v restic)" || { echo "job=restic-root status=error reason=\"restic not found\""; exit 1; }
