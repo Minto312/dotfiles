@@ -1,0 +1,15 @@
+[Unit]
+Description=lenovo (Windows) の構成スナップショットを採って machine リポジトリへ落とす
+Documentation=file://%h/workspace/machine/storage/backup-lenovo/README.md
+
+[Service]
+Type=oneshot
+# lenovo はノートで常時起動していないので、届かない回は status=skip で正常終了する。
+ExecStart=%h/dotfiles/scripts/backup-lenovo/collect.sh
+TimeoutStartSec=20min
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

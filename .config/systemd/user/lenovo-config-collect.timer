@@ -1,0 +1,13 @@
+[Unit]
+Description=Collect lenovo config snapshot daily
+
+[Timer]
+# lenovo が起きている見込みが高い時間帯に。:00 / :30 と既存ジョブを避ける。
+OnCalendar=*-*-* 13:17:00 Asia/Tokyo
+RandomizedDelaySec=20m
+# ノートが落ちていた回を 1 度だけ拾う。
+Persistent=true
+Unit=lenovo-config-collect.service
+
+[Install]
+WantedBy=timers.target
