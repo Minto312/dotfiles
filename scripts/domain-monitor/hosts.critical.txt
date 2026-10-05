@@ -15,6 +15,11 @@ metalk.raim-tech.com    web
 csa.raim-tech.com       web
 sozan.raim-tech.com     web
 
+# RelayChat のサポート / 利用規約 / プライバシーポリシー (2026-10-02 出現、Cloudflare proxy 配下)。
+# アプリ側から外部に案内される URL なので落ちたら気づくべき、として 2026-10-05 に critical にした。
+# 下の dev.relay / livekit.dev.relay (dev 環境の ALB) とは別物。
+relay.raim-tech.com     web
+
 # dev.relay.raim-tech.com は 2026-08-21 に「常時稼働させる」と判断して critical に
 # 入れていたが、2026-08-26 に外した。dev 環境の ALB 作り直しの最中で、CNAME が
 # 3 日で 3 回付け替わり (mattermost-dev-398472160 → mattermost-network-429027645 →
