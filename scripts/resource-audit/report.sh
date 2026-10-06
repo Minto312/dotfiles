@@ -15,8 +15,10 @@ WS_LABEL="${RESOURCE_AUDIT_WS_LABEL:-resource-audit}"
 AGENT_NAME="${RESOURCE_AUDIT_AGENT_NAME:-resource-audit}"
 CWD="${RESOURCE_AUDIT_CWD:-$HOME/workspace/machine}"
 # 「週次の自動実行」の文言がスキルの Discord 送信ステップのトリガーになる。
-# ここを書き換えるときは SKILL.md の手順 5 も併せて直すこと。
+# ここを書き換えるときは SKILL.md の手順 4 も併せて直すこと。
 PROMPT="${RESOURCE_AUDIT_PROMPT:-リソース監査レポートを出して。これは週次の自動実行なので、レポートを書き終えたら最後に要約を Discord にも流して。}"
+# claude はペインの対話シェルが `agent start --kind claude` で起動する (= そのシェルの PATH で解決される)。
+# ここで存在だけ確かめておく。
 CLAUDE_BIN="${RESOURCE_AUDIT_CLAUDE_BIN:-$HOME/.local/bin/claude}"
 
 # systemd timer の PATH には ~/.local/bin が入らない。
@@ -48,7 +50,25 @@ ws_id_by_label() {
     | jq -r --arg l "$WS_LABEL" 'first(.result.workspaces[]? | select(.label == $l) | .workspace_id) // empty'
 }
 
+pane_ids() {
+  herdr pane list --workspace "$1" 2>/dev/null | jq -r '.result.panes[]?.pane_id' | LC_ALL=C sort || true
+}
+
+# herdr 0.9.0 の agent prompt は Enter まで送って確定する
+# (0.7.x の「agent send + pane send-keys Enter」の置き換え。agent send は 0.9.0 で消えた)。
+# --wait は投入後 5 秒以内に working / blocked が観測できないと agent_prompt_stalled で失敗するので、
+# 「本当に走り出したか」の確認を兼ねる。
+submit_prompt() {
+  local out
+  if ! out=$(herdr agent prompt "$AGENT_NAME" "$PROMPT" --wait --until working --until blocked --timeout 30000 2>&1); then
+    log "agent prompt に失敗した: $out"
+    return 1
+  fi
+  log "プロンプトを投入した: $(printf '%s' "$out" | jq -c '.result.agent.agent_status // .result // .' 2>/dev/null || printf '%s' "$out")"
+}
+
 # ---- 1. 専用ワークスペースを用意する (無ければ作る) -------------------------
+WS_CREATED=false
 WS_ID=$(ws_id_by_label)
 if [ -z "$WS_ID" ]; then
   log "ワークスペース '$WS_LABEL' が無いので作る"
@@ -59,50 +79,58 @@ if [ -z "$WS_ID" ]; then
     fallback_notify "herdr のワークスペース '${WS_LABEL}' を作れずレポートを書かせられませんでした。講評なしの数値のみです。"
     exit 1
   fi
+  WS_CREATED=true
 fi
 log "workspace: $WS_ID ($WS_LABEL)"
 
 # ---- 2. 既存エージェントがあれば再利用する ---------------------------------
 # agent start で起動したものは name を持つので agent get <name> で引ける。
-# 見つかれば pane run でプロンプトを投げるだけ = ペインを増やさない。
+# 見つかればプロンプトを投げるだけ = ペインを増やさない。
 AGENT_JSON=$(herdr agent get "$AGENT_NAME" 2>/dev/null || true)
 PANE_ID=$(printf '%s' "$AGENT_JSON" | jq -r '.result.agent.pane_id // empty' 2>/dev/null || true)
 
 if [ -n "$PANE_ID" ]; then
   log "既存エージェントを再利用する (pane=$PANE_ID)"
-  # ⚠ claude の TUI では pane run / agent send だけだと入力欄に文字が乗るだけで
-  #    確定しない (実測: status が working にならない)。Enter を別途送る必要がある。
-  if ! herdr agent send "$AGENT_NAME" "$PROMPT" >/dev/null \
-    || ! { sleep 1; herdr pane send-keys "$PANE_ID" Enter >/dev/null; }; then
-    log "既存ペインへのプロンプト投入に失敗した"
+  if ! submit_prompt; then
     fallback_notify "既存の resource-audit ペインにプロンプトを投入できませんでした。講評なしの数値のみです。"
     exit 1
   fi
-  sleep 3
-  STATUS=$(herdr agent get "$AGENT_NAME" 2>/dev/null | jq -r '.result.agent.agent_status // "unknown"' || echo unknown)
-  log "プロンプトを投入した (status=$STATUS)"
-  # ここから先は claude が Discord へ要約を流す (SKILL.md の手順 5)。
+  # ここから先は claude が Discord へ要約を流す (SKILL.md の手順 4)。
   exit 0
 fi
 
-# ---- 3. 無ければ専用ワークスペース内に起動する -----------------------------
+# ---- 3. 無ければシェルのペインを用意して起動する ---------------------------
+# herdr 0.9.0 の agent start は新しいペインを作らず、「シェルのプロンプトにいる既存ペイン」で
+# エージェントを起動する (--pane 必須)。0.7.x の --workspace / --cwd / --no-focus は無い。
 log "エージェントが居ないので起動する"
-if ! herdr agent start "$AGENT_NAME" \
-  --workspace "$WS_ID" \
-  --cwd "$CWD" \
-  --no-focus \
-  -- "$CLAUDE_BIN" --dangerously-skip-permissions "$PROMPT" >/dev/null; then
-  log "agent start に失敗した"
-  fallback_notify "resource-audit のエージェントを起動できませんでした。講評なしの数値のみです。"
+if [ "$WS_CREATED" = true ]; then
+  # workspace create が作った初期ペイン (シェル) をそのまま使う。
+  NEW_PANE=$(pane_ids "$WS_ID" | head -n 1 || true)
+else
+  # 既存ワークスペースに居るペインは人が使っているかもしれないので乗っ取らない。
+  # 専用のタブを足し、増えたペインを使う (tab create の出力形式に依存しないよう差分で取る)。
+  BEFORE=$(pane_ids "$WS_ID")
+  herdr tab create --workspace "$WS_ID" --cwd "$CWD" --label "$AGENT_NAME" --no-focus >/dev/null 2>&1 || true
+  NEW_PANE=$(LC_ALL=C comm -13 <(printf '%s\n' "$BEFORE") <(pane_ids "$WS_ID") | head -n 1 || true)
+fi
+if [ -z "$NEW_PANE" ]; then
+  log "起動先のペインを用意できなかった"
+  fallback_notify "resource-audit 用のペインを用意できませんでした。講評なしの数値のみです。"
   exit 1
 fi
 
+# シェルが起動しきる前に start すると「プロンプトに居ない」で弾かれうる。
 sleep 3
-NEW_PANE=$(herdr agent get "$AGENT_NAME" 2>/dev/null | jq -r '.result.agent.pane_id // empty' || true)
-if [ -n "$NEW_PANE" ]; then
-  log "起動した (pane=$NEW_PANE)"
-  # ここから先は claude が Discord へ要約を流す (SKILL.md の手順 5)。
-else
-  log "起動したが agent get で見つからない (要確認)"
-  fallback_notify "エージェントを起動したが herdr から引けませんでした。レポートが書かれたか不明なため数値のみ流します。"
+if ! OUT=$(herdr agent start "$AGENT_NAME" --kind claude --pane "$NEW_PANE" --timeout 90000 \
+  -- --dangerously-skip-permissions 2>&1); then
+  log "agent start に失敗した (pane=$NEW_PANE): $OUT"
+  fallback_notify "resource-audit のエージェントを起動できませんでした。講評なしの数値のみです。"
+  exit 1
 fi
+log "起動した (pane=$NEW_PANE)"
+
+if ! submit_prompt; then
+  fallback_notify "resource-audit のエージェントは起動したが、プロンプトを投入できませんでした。講評なしの数値のみです。"
+  exit 1
+fi
+# ここから先は claude が Discord へ要約を流す (SKILL.md の手順 4)。
