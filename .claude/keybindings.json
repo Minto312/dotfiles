@@ -6,7 +6,7 @@
       "context": "Chat",
       "bindings": {
         "alt+enter": "chat:newline",
-        "ctrl+enter": null
+        "ctrl+enter": "chat:newline"
       }
     }
   ]
