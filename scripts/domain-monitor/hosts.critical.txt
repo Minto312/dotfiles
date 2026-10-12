@@ -42,10 +42,8 @@ where-truck.com         dns-only
 # apex は さくらのレンタルサーバ (182.48.49.166) を直接指し Cloudflare を経由しない。
 # www だけ Cloudflare proxy 配下という混在構成。
 #
-# 🔴 www は 2026-08-16 時点で HTTPS が壊れている (Cloudflare 526 = オリジン証明書が無効)。
-#    オリジンの Let's Encrypt 証明書は SAN が `sazanami.ai` の 1 枚だけで www を含まず、
-#    Cloudflare が SNI `www.sazanami.ai` で繋ぐと さくらの既定証明書 (CN=*.sakura.ne.jp) が
-#    返るため Full (strict) の検証に落ちる。直るまでアラートが鳴り続ける。
-#    静かにしたければこの行を消す (監視対象から外れるだけで、壊れている事実は変わらない)。
+# www は 2026-08-16 に HTTPS が壊れているのを検出した (Cloudflare 526。オリジンの証明書が
+# www を含まない)。2026-08-20 に Cloudflare のエッジで apex へ 301 させてオリジンに
+# 到達させない形で直した。以後の正常値は `ok http=301`。
 sazanami.ai             web
 www.sazanami.ai         web
