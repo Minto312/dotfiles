@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# JINGS (minato.takashima@jings.jp) 用の gws。
+# JINGS アカウント用の gws。
 # gws 0.22 は複数アカウント機能が削除されたため、設定ディレクトリごと分離する。
 # 暗号鍵は OS keyring（service=gws-cli はディレクトリ共通）を使わず、
 # ~/.config/gws-jings/.encryption_key に閉じる（既存の ~/.config/gws と干渉させない）。
