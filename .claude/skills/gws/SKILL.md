@@ -29,6 +29,29 @@ gws <service> <resource> [sub-resource] <method> [flags]
 
 初回は `gws auth login` をターミナルで実行（ブラウザが開く OAuth フロー）。認証情報は OS のキーリング（develop マシンでは Secret Service）に保存される。
 
+### アカウントの使い分け（Raim / JINGS）
+
+| コマンド | アカウント | 設定ディレクトリ |
+|---|---|---|
+| `gws` | `m.takashima@raim-tech.com`（Raim） | `~/.config/gws` |
+| `gws-jings` | `minato.takashima@jings.jp`（JINGS） | `~/.config/gws-jings` |
+
+- **JINGS の Drive・メール・カレンダーは `gws-jings`**（`~/workspace/jings/` 配下の作業が該当）。サブコマンド・フラグは `gws` と同じで、`gws` を `gws-jings` に置き換えるだけ
+- どちらのアカウントで動いているか迷ったら `gws-jings auth status 2>/dev/null | grep user`
+- gws 0.22 で複数アカウント機能（`--account`）は削除済み。だから設定ディレクトリごと `GOOGLE_WORKSPACE_CLI_CONFIG_DIR` で分けている（`~/dotfiles/scripts/gws-jings/`）
+- 🔴 **別ディレクトリ用のラッパーは鍵をファイルに置く（`GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file`）**。keyring の項目（service=`gws-cli`, user=`$USER`）は設定ディレクトリに関係なく共通なので、別ディレクトリから keyring に新しい鍵を書くと既存の `credentials.enc` が復号できなくなり、gws はそれを自動で消す
+- 🔴 **別組織のアカウントでは `client_secret.json` の `project_id` を空にする**。gws はそれを `x-goog-user-project`（クォータ・課金先）として毎回送るので、そのプロジェクトの権限が無いアカウントは全 API が 403（`Caller does not have required permission to use project …`）になる。空にすればヘッダーが付かず、クォータは OAuth クライアント側のプロジェクトに付く（`~/.config/gws-jings/client_secret.json` は空にしてある）
+- アカウントを足すときは `gws-jings` と同じ形のラッパーを作り、`client_secret.json` をコピーして `project_id` を空にする
+
+### develop での再ログイン
+
+develop は SSH 先なので、`gws auth login` が待つ `http://localhost:<port>` の callback を手元のブラウザへ通す必要がある。
+
+1. `BROWSER=true gws-jings auth login --scopes <カンマ区切り>` を裏で起動し、出力から URL と port を拾う（スコープは `gws-jings auth status` の `scopes` に揃える）
+2. `lenovo-tunnel up <port>` で callback を通す。**port は振り替わると redirect_uri と食い違って失敗する**ので、`ok` 行が同じ番号か確認
+3. URL に `&login_hint=<メール>` を足して、ユーザーに手元のブラウザで開いてもらう。🔴 SSH 越しの `Start-Process` は手元の画面に出ない（`lenovo-tunnel open` も同じ）。長い URL をそのまま渡すか、develop に 302 で飛ばすだけの小さなサーバを立ててそのポートも `lenovo-tunnel up` し、`http://localhost:<そのポート>` を開いてもらう
+4. 終わったら `lenovo-tunnel down <port>`
+
 ## サービスと代表操作
 
 ### Gmail
