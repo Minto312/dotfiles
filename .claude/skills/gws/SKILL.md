@@ -33,8 +33,8 @@ gws <service> <resource> [sub-resource] <method> [flags]
 
 | コマンド | アカウント | 設定ディレクトリ |
 |---|---|---|
-| `gws` | `m.takashima@raim-tech.com`（Raim） | `~/.config/gws` |
-| `gws-jings` | `minato.takashima@jings.jp`（JINGS） | `~/.config/gws-jings` |
+| `gws` | Raim アカウント | `~/.config/gws` |
+| `gws-jings` | JINGS アカウント | `~/.config/gws-jings` |
 
 - **JINGS の Drive・メール・カレンダーは `gws-jings`**（`~/workspace/jings/` 配下の作業が該当）。サブコマンド・フラグは `gws` と同じで、`gws` を `gws-jings` に置き換えるだけ
 - どちらのアカウントで動いているか迷ったら `gws-jings auth status 2>/dev/null | grep user`
