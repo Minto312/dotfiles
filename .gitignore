@@ -20,6 +20,7 @@ zsh/env.zsh.backup
 # --- secrets / credentials (このリポジトリは PUBLIC。絶対にコミットしない) ---
 .config/Bitwarden CLI/
 .config/gws/
+.config/gws-*/
 .config/mf/
 .config/rclone/
 .config/tigervnc/
