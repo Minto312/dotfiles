@@ -9,7 +9,7 @@
 #   3. root 用の SSH 鍵と ssh_config を用意 (鍵は karinto のものを複製 = pve 側の変更が不要)
 #   4. root リポジトリ専用のパスワードを生成 (user 側とは別にする)
 #   5. restic init
-#   6. systemd system unit + timer を設置 (日次 18:00 UTC = 03:00 JST)
+#   6. systemd system unit + timer を設置 (日次 03:00 JST)
 #
 # --uninstall で撤去する。
 
@@ -99,10 +99,10 @@ EOF
 
 cat > /etc/systemd/system/backup-root.timer <<'EOF'
 [Unit]
-Description=restic L1 (root) の日次実行 (18:00 UTC = 03:00 JST)
+Description=restic L1 (root) の日次実行 (03:00 JST)
 
 [Timer]
-OnCalendar=*-*-* 18:00:00
+OnCalendar=*-*-* 03:00:00 Asia/Tokyo
 RandomizedDelaySec=300
 Persistent=true
 

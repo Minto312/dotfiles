@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # L1 (user 側) の systemd user timer を設置/撤去する。
+# 時刻は Asia/Tokyo を明示する。develop のシステム TZ に依存させない (2026-10-20 に UTC → JST へ変えた)。
 #
-#   backup-user   : 日次 17:30 UTC (= 02:30 JST)
-#   maintain-user : 週次 土 15:00 UTC (= 日 00:00 JST)
+#   backup-user   : 日次 02:30 JST
+#   maintain-user : 週次 日 00:00 JST
 #
 # 時間帯は既存 timer とぶつけないように選んである:
-#   resource-audit-collect 19:17 UTC / domain-monitor-audit 19:52 UTC (どちらも日次)
+#   resource-audit-collect 04:12 JST / domain-monitor-audit 04:37 JST (どちらも日次)
 # I/O は gha-runner と NVMe を共有しているので idle クラスに落とす
 #   (machine/troubleshooting/machine-slow-ci-io-contention.md)
 
@@ -45,10 +46,10 @@ EOF
 
 cat > "$UNIT_DIR/backup-user.timer" <<'EOF'
 [Unit]
-Description=restic L1 の日次実行 (17:30 UTC = 02:30 JST)
+Description=restic L1 の日次実行 (02:30 JST)
 
 [Timer]
-OnCalendar=*-*-* 17:30:00
+OnCalendar=*-*-* 02:30:00 Asia/Tokyo
 RandomizedDelaySec=300
 Persistent=true
 
@@ -71,10 +72,10 @@ EOF
 
 cat > "$UNIT_DIR/restic-maintain.timer" <<'EOF'
 [Unit]
-Description=restic L1 保守の週次実行 (土 15:00 UTC = 日 00:00 JST)
+Description=restic L1 保守の週次実行 (日 00:00 JST)
 
 [Timer]
-OnCalendar=Sat *-*-* 15:00:00
+OnCalendar=Sun *-*-* 00:00:00 Asia/Tokyo
 RandomizedDelaySec=600
 Persistent=true
 
@@ -97,10 +98,10 @@ EOF
 
 cat > "$UNIT_DIR/backup-l3.timer" <<'EOF'
 [Unit]
-Description=restic L3 の日次実行 (18:30 UTC = 03:30 JST。L1 の後)
+Description=restic L3 の日次実行 (03:30 JST。L1 の後)
 
 [Timer]
-OnCalendar=*-*-* 18:30:00
+OnCalendar=*-*-* 03:30:00 Asia/Tokyo
 RandomizedDelaySec=600
 Persistent=true
 
@@ -121,10 +122,10 @@ EOF
 
 cat > "$UNIT_DIR/backup-heartbeat.timer" <<EOF
 [Unit]
-Description=backup heartbeat の週次実行 (月 00:20 UTC = 09:20 JST)
+Description=backup heartbeat の週次実行 (月 09:20 JST)
 
 [Timer]
-OnCalendar=Mon *-*-* 00:20:00
+OnCalendar=Mon *-*-* 09:20:00 Asia/Tokyo
 RandomizedDelaySec=300
 Persistent=true
 

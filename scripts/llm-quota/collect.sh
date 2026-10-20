@@ -294,7 +294,9 @@ probe_claude() {
   #   /usage に MCP は要らない。所要も 2.7 秒 → 1.7 秒に縮む (実測 3 回平均)。
   # ⚠ </dev/null が無いと claude は stdin を 3 秒待ってから
   #   `no stdin data received in 3s` を stderr に出して進む。丸ごと無駄なので塞ぐ。
-  out="$(timeout 120 "$bin" -p "/usage" --output-format json --no-session-persistence --strict-mcp-config </dev/null 2>/dev/null)" || true
+  # 🔴 TZ=UTC は外さない。resets の表記はプロセスの TZ で決まり、Asia/Tokyo だと
+  #   `resets Oct 25, 10:59pm (Asia/Tokyo)` になって GNU date が読めない (2026-10-20 に実測)。
+  out="$(TZ=UTC timeout 120 "$bin" -p "/usage" --output-format json --no-session-persistence --strict-mcp-config </dev/null 2>/dev/null)" || true
   text="$(printf '%s' "$out" | jq -r '.result // empty' 2>/dev/null)" || true
   if [ -z "$text" ]; then
     lq_emit_probe_failure claude "empty or unparsable response"
