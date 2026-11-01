@@ -8,6 +8,15 @@ set -uo pipefail
 
 input=$(cat)
 
+# 使用率をほかのプロセス（使用率の見張り）から読めるようにファイルへ残す。
+# 値はアカウント単位なので、どのセッションが書いても最新の値で上書きしてよい。
+if jq -e '.rate_limits' <<<"$input" >/dev/null 2>&1; then
+  mkdir -p "$HOME/.claude/cache"
+  jq -c '{ts: (now | floor), rate_limits: .rate_limits}' <<<"$input" \
+    >"$HOME/.claude/cache/rate-limits.json.tmp" 2>/dev/null \
+    && mv -f "$HOME/.claude/cache/rate-limits.json.tmp" "$HOME/.claude/cache/rate-limits.json"
+fi
+
 # --- ANSI ---
 RESET=$'\033[0m'
 BOLD=$'\033[1m'
