@@ -35,3 +35,14 @@ pane_history = true
 
 [ui]
 agent_panel_sort = "spaces"
+
+[ui.sidebar.agents]
+# agents リストの行構成。既定は [["state_icon","machine","workspace","tab"], ["agent"]]。
+# tab (タブ名) は既定では非フォーカスのワークスペースで overlay0 (#565F89) になり、
+# tokyo-night の背景 #1a1b26 に対してコントラスト 2.76:1 しかなく読めない。
+# トークンごとに fg を指定して上書きする (fg は #RGB / #RRGGBB のみ。色名は不可)。
+# #a2aad2 = panel_bg (#1a1b26) に対して 7.50:1。workspace 名の subtext0 (8.10:1) よりわずかに暗く階層を残す。
+rows = [
+  ["state_icon", "machine", "workspace", { token = "tab", fg = "#a2aad2" }],
+  ["agent"],
+]
