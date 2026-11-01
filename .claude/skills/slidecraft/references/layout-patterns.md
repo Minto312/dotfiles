@@ -251,7 +251,7 @@ pdftoppm -r 95 -png deck.pdf _preview/p   # 各ページを画像化して目視
         shutil.move(tmp, path)
     fix(sys.argv[1])
     ```
-    非箇条書きは `indent="0" marL="0"`（順序が逆）、表セルは `<a:tcPr ... marL=...>`（indent無し）なので、この正規表現は箇条書き段落だけに一致して安全。`inject_theme` の後（PDF化の前）に1回流す。実例: `~/workspace/sysmex/notes/slides/build/fix_bullet_indent.py`。
+    非箇条書きは `indent="0" marL="0"`（順序が逆）、表セルは `<a:tcPr ... marL=...>`（indent無し）なので、この正規表現は箇条書き段落だけに一致して安全。`inject_theme` の後（PDF化の前）に1回流す。実例: `~/workspace/jings/sysmex/notes/slides/build/fix_bullet_indent.py`。
 - **ページ番号は手で振らない**。`pg()` カウンタで採番すれば、スライドの挿入・並び替え後も自動で整う。
 - **区切り・表紙は採番しない**（`pg()` を呼ばない）。
 - **強調は色の濃淡で**：通常ノード=primary、主役ノード=navy（`step.accent: C.navy`）。
@@ -272,6 +272,6 @@ pdftoppm -r 95 -png deck.pdf _preview/p   # 各ページを画像化して目視
        ```
        `fontk` は px→pt が小さくなりがちなので 1.4〜1.5 で読みやすさを補正（箱からの溢れは PDF 目視で調整）。図スライドは説明文を省いて図に全幅を使うと収まりやすい。
     3. **deck本体に drawio の PNG は埋め込まない**（編集できなくなるため）。`.drawio` は設計アーティファクトとして残す。
-  - 実例: シスメックス案件 `~/workspace/sysmex/notes/slides/`（`build/gen_diagrams.py`=drawio生成、`build/gen_deck.js` の `drawSystemArchitecture`/`drawResponsibility`/`drawDataDeletion`=ネイティブ移植）。
+  - 実例: シスメックス案件 `~/workspace/jings/sysmex/notes/slides/`（`build/gen_diagrams.py`=drawio生成、`build/gen_deck.js` の `drawSystemArchitecture`/`drawResponsibility`/`drawDataDeletion`=ネイティブ移植）。
 - **直接編集された pptx の取り込み**：pptx を解凍し `ppt/presentation.xml` の `sldIdLst` で順序、各 `slideN.xml` の `<a:off>/<a:ext>`(EMU÷914400=inch) で図形座標、`<a:t>` でテキストを抽出 → 生成スクリプト（正本）へ反映。順序・座標・テキストは確実に差分が取れる（書式の微調整は取りこぼしうる）。
 - **正本は build_deck.js**。直接編集した pptx は再生成で上書きされるため、必ずスクリプトへ取り込む。
