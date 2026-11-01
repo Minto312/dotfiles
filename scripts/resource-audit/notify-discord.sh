@@ -6,20 +6,25 @@
 #   2. report.sh が herdr にペインを作れなかったとき、--from-snapshot で
 #      summary.json から機械生成した数値サマリを流す (フォールバック)
 #
-# webhook は resource-audit 専用の ~/.config/resource-audit/env を使う
-# (discord-notify スキルとは別チャンネル。無ければ discord-notify の値に落ちる)。
-# 未設定でも呼び出し側を壊さないよう exit 0 で抜ける (collect.sh と同じ方針)。
+# 送り口は discord-post (discord-ack の bot)。develop チャンネルへ送る。
+# 経路 1 は claude のセッションを紐付けるので、Discord で通知にリプライすると
+# レポートを書いたセッションの続きで作業できる。経路 2 は timer 起点なので紐付けない。
+# discord-post が無い・落ちたときは従来どおり resource-audit 専用の webhook
+# (~/.config/resource-audit/env。無ければ discord-notify の値) へ直接送る。
+# どちらも使えなくても呼び出し側を壊さないよう exit 0 で抜ける (collect.sh と同じ方針)。
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STATE_DIR="${RESOURCE_AUDIT_STATE:-$HOME/.local/state/resource-audit}"
+DISCORD_POST="$HOME/.local/bin/discord-post"
 
 log() { printf '[%s] notify-discord: %s\n' "$(date -Is)" "$*" >&2; }
 
 # 環境変数が優先。systemd unit は EnvironmentFile で渡してくるが、
 # 対話シェルから直に叩く場合はここで読む。
 # 専用 env を先に見る。週次レポートの要約は herdr のペインの claude が直に
-# このスクリプトを叩くので unit の EnvironmentFile が効かない。ここの順序が実質の宛先。
+# このスクリプトを叩くので unit の EnvironmentFile が効かない。
+# ここの順序が webhook に落ちたときの実質の宛先 (discord-post 側は -c develop で決まる)。
 if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
   for ENV_FILE in \
     "${XDG_CONFIG_HOME:-$HOME/.config}/resource-audit/env" \
@@ -40,7 +45,7 @@ while [ "$#" -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --note) NOTE="${2:-}"; shift ;;
     --help|-h)
-      sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+      sed -n '2,14p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) ARGS+=("$1") ;;
   esac
   shift
@@ -89,18 +94,35 @@ if [ -z "${BODY//[[:space:]]/}" ]; then
   exit 0
 fi
 
-# content の上限は 2000 "文字" (バイトではない)。
-# jq -Rs ならコードポイントで数えて切るので日本語が途中で壊れない。
-# --dry-run でも同じものを見せたいので、送信判定より前に組む。
-PAYLOAD=$(printf '%s' "$BODY" \
-  | jq -Rs 'if length > 2000 then .[:1980] + "\n…(truncated)" else . end | {content: .}')
-
-# 送らずに本文だけ確認する (webhook を持たない検証用)。
+# 送らずに本文だけ確認する (bot も webhook も使わない検証用)。
+# discord-post は 2000 文字を超えた分を行単位で分けて送るので、本文はそのまま出す。
 if [ "$DRY_RUN" = 1 ]; then
-  log "--dry-run: 送信せず、実際に送られる content を出す (元 ${#BODY} 文字)"
-  printf '%s\n' "$PAYLOAD" | jq -r '.content'
+  log "--dry-run: 送信せず、実際に送られる本文を出す (${#BODY} 文字。webhook に落ちたときだけ 2000 文字で切る)"
+  printf '%s\n' "$BODY"
   exit 0
 fi
+
+# ---- discord-post で送る ----------------------------------------------------
+# 経路 1 (claude が stdin で渡してくる) は --no-session を付けない。discord-post が
+# 呼び出し元のセッション ID を拾うので、通知へのリプライでレポートの続きを頼める。
+# 経路 2 (--from-snapshot) は timer 起点で続けるセッションが無いので紐付けない。
+DP_ARGS=(-c develop --source resource-audit --cwd "$HOME/workspace/machine")
+if [ "$FROM_SNAPSHOT" = 1 ]; then
+  DP_ARGS+=(--no-session)
+fi
+if [ -x "$DISCORD_POST" ]; then
+  if printf '%s' "$BODY" | "$DISCORD_POST" "${DP_ARGS[@]}" >/dev/null; then
+    log "送信した (discord-post, ${#BODY} 文字)"
+    exit 0
+  fi
+  log "discord-post で送れなかったので webhook へ直接送る"
+fi
+
+# ---- 予備: webhook へ直接送る -----------------------------------------------
+# content の上限は 2000 "文字" (バイトではない)。webhook は分割してくれないので切る。
+# jq -Rs ならコードポイントで数えて切るので日本語が途中で壊れない。
+PAYLOAD=$(printf '%s' "$BODY" \
+  | jq -Rs 'if length > 2000 then .[:1980] + "\n…(truncated)" else . end | {content: .}')
 
 if [ -z "$WEBHOOK_URL" ]; then
   log "DISCORD_WEBHOOK_URL 未設定のため送信をスキップした"
@@ -117,7 +139,7 @@ post() {
 
 CODE=$(post || echo 000)
 
-# レート制限は 1 度だけ待って再送する (discord-notify スキルと同じ方針)。
+# レート制限は 1 度だけ待って再送する (discord-post と同じ方針)。
 if [ "$CODE" = 429 ]; then
   WAIT=$(jq -r '.retry_after // 2' "$RESP" 2>/dev/null || echo 2)
   log "429 を受けたので ${WAIT}s 待って 1 度だけ再送する"

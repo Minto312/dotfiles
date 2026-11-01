@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -36,6 +37,9 @@ UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 STATE_DIR = Path(os.environ.get("MEM_WATCH_STATE",
                                 Path.home() / ".local/state/mem-watch"))
+
+# 送り口は discord-ack の bot。無い・落ちたときだけ従来の webhook へ直接送る。
+DISCORD_POST = Path.home() / ".local/bin/discord-post"
 
 # 🔴 検索語は「広く 1〜2 本」。細かい語を並べるとリクエストが増えて 429 を食らう。
 # どちらも価格昇順で 100 件返るので、狭い語を何本も投げるより取りこぼしが少ない。
@@ -352,6 +356,24 @@ def render(hits: list[dict]) -> str:
 
 
 def notify(text: str) -> None:
+    # bot (discord-ack) 経由で resource-audit と同じ develop チャンネルへ送る。
+    # リプライで頼まれたら ~/workspace/machine (pve 増設の記録がある) で作業できるよう出どころを残す。
+    # timer 起点なので claude のセッションは紐付けない (--no-session)。
+    # 2000 字を超える分は discord-post が行単位で分けるので、ここでは切らない。
+    if os.access(DISCORD_POST, os.X_OK):
+        try:
+            r = subprocess.run(
+                [str(DISCORD_POST), "-c", "develop", "--source", "mem-watch",
+                 "--cwd", str(Path.home() / "workspace/machine"), "--no-session"],
+                input=text.encode(), stdout=subprocess.DEVNULL, timeout=120)
+            if r.returncode == 0:
+                return
+            print(f"warn: discord-post が失敗した (exit {r.returncode})。webhook へ直接送る",
+                  file=sys.stderr)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print(f"warn: discord-post を実行できない ({e})。webhook へ直接送る", file=sys.stderr)
+
+    # ⚠ ここから下は discord-post が使えないときの予備。出物の通知を落とさないために残す。
     url = webhook_url()
     if not url:
         print("warn: webhook 未設定。通知をスキップ", file=sys.stderr)
