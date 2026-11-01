@@ -9,8 +9,10 @@
 #
 # ⚠ 判定はしない。数えて出すだけ。閾値を超えたら鳴らすのは Grafana Alerting の担当。
 #
-# webhook は resource-audit と同じ探索順 (専用 env → discord-notify) で解決する。
-# 未設定なら何もせず exit 0 (呼び出し側を壊さない)。
+# 送り口は discord-post (discord-ack の bot) で、resource-audit と同じ develop チャンネルへ送る。
+# discord-post が無い・落ちたときは従来どおり webhook へ直接送る。webhook は
+# resource-audit と同じ探索順 (専用 env → discord-notify) で解決する。
+# discord-post も webhook も無ければ何もせず exit 0 (呼び出し側を壊さない)。
 
 set -uo pipefail
 
@@ -26,12 +28,14 @@ if [ -z "${DISCORD_WEBHOOK_URL:-}" ]; then
   done
 fi
 WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
+DISCORD_POST="$HOME/.local/bin/discord-post"
 
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
 
-if [ -z "$WEBHOOK_URL" ] && [ "$DRY_RUN" -eq 0 ]; then
-  echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) job=backup-heartbeat status=skip reason=\"no webhook\""
+# bot はトークンだけで送れるので、discord-post があれば webhook が無くても止めない。
+if [ ! -x "$DISCORD_POST" ] && [ -z "$WEBHOOK_URL" ] && [ "$DRY_RUN" -eq 0 ]; then
+  echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) job=backup-heartbeat status=skip reason=\"no discord-post, no webhook\""
   exit 0
 fi
 
@@ -96,6 +100,25 @@ $body
 if [ "$DRY_RUN" -eq 1 ]; then
   printf '%s\n' "$msg"
   exit 0
+fi
+
+# bot (discord-ack) 経由で送る。timer 起点なので claude のセッションは紐付けない。
+# 成否の行は従来と同じ logfmt で出す (http の代わりに via と投稿したメッセージ ID)。
+# ⚠ 先頭の ID は head ではなく展開で取り出す。head だと分割投稿で 2 つ目の ID を
+#    書くときに SIGPIPE で落ち、pipefail で失敗扱いになって webhook から二重に送ってしまう。
+if [ -x "$DISCORD_POST" ]; then
+  if ids="$(printf '%s' "$msg" | "$DISCORD_POST" -c develop --source backup \
+       --cwd "$HOME/workspace/machine" --no-session)"; then
+    echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) job=backup-heartbeat status=ok via=discord-post msg=${ids%%$'\n'*}"
+    exit 0
+  fi
+  # 沈黙を異常のサインにしている通知なので、新しい部品が落ちても webhook で届ける。
+  echo "discord-post で送れなかったので webhook へ直接送る" >&2
+fi
+
+if [ -z "$WEBHOOK_URL" ]; then
+  echo "ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) job=backup-heartbeat status=error reason=\"discord-post failed, no webhook\""
+  exit 1
 fi
 
 code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \

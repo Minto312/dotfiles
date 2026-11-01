@@ -103,6 +103,8 @@ bash --noprofile --norc -c 'S=~/.local/state/resource-audit; jq . $S/latest/summ
 プロンプトに **「週次の自動実行」** とあれば `report.sh` 経由の起動である。
 このとき端末に書くだけでは誰も読まないので、**レポートを書き終えたあとに要約を
 Discord へ送る**。宛先・文字数制限・レート制限の面倒は送信スクリプトが持っている。
+送信は `~/.local/bin/discord-post` (bot) 経由で、**このセッションが通知に紐付く**。
+ユーザーが Discord でその通知にリプライすると、このセッションを分岐して続きの作業が行われる。
 
 ```bash
 bash --noprofile --norc -c '~/dotfiles/scripts/resource-audit/notify-discord.sh' <<'EOF'
@@ -121,13 +123,14 @@ EOF
 
 本文の作り方:
 
-- **2000 文字以内**。超えた分は送信スクリプトが切るが、切られる前提で書かない
+- **2000 文字以内**。超えた分は複数メッセージに分かれる (webhook に落ちたときは切られる) ので、はみ出す前提で書かない
 - 1 行目に見出し、2 行目に**結論と主要数値**。ここだけでスマホの通知欄で判断が付くこと
 - 指摘は**優先度順に最大 5 件、1 件 1 行**。端末のレポートの見出しを縮めたもので良い
 - 最後に**ユーザーの判断待ち事項**を 1 行。無ければ「対応不要」と書く
 - Markdown の表は Discord で崩れるので使わない。箇条書きに落とす
 
-送信スクリプトは webhook 未設定でも `exit 0` で黙って抜ける。
+送信スクリプトは discord-post (bot) を優先し、使えなければ webhook へ直接送る。
+どちらも使えなくても `exit 0` で黙って抜ける。
 `--dry-run` を付けると送信せず本文だけ出せるので、確認したいときに使う。
 
 **手で起動されたとき (プロンプトに「週次の自動実行」が無いとき) は流さない。**
@@ -164,4 +167,4 @@ EOF
 | 週次でこのスキルを起動する側 | `~/dotfiles/scripts/resource-audit/report.sh` |
 | Discord 送信口 | `~/dotfiles/scripts/resource-audit/notify-discord.sh` |
 | 常駐サービス個別 | `machine/services/` / `machine/dev/agent-web/` |
-| 通知 | resource-audit 専用 webhook (`~/.config/resource-audit/env`)。無ければ `~/.config/discord-notify/env` に落ちる |
+| 通知 | `~/.local/bin/discord-post` (discord-ack の bot) で develop チャンネルへ。使えないときは resource-audit 専用 webhook (`~/.config/resource-audit/env`)、無ければ `~/.config/discord-notify/env` に落ちる |

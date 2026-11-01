@@ -25,7 +25,9 @@ done
 #   mkdir -p ~/.config/discord-notify
 #   echo "DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'" > ~/.config/discord-notify/env
 #
-# resource-audit の通知を別チャンネルに出す場合 (省略すると上の discord-notify と同じ宛先):
+# resource-audit / backup heartbeat / mem-watch は ~/.local/bin/discord-post (discord-ack の bot) で
+# develop チャンネルへ送る。下の webhook は discord-post が無い・落ちたときの予備で、
+# 省略すると上の discord-notify と同じ宛先に落ちる:
 #   mkdir -p ~/.config/resource-audit && chmod 700 ~/.config/resource-audit
 #   echo "DISCORD_WEBHOOK_URL='https://discord.com/api/webhooks/...'" > ~/.config/resource-audit/env
 #

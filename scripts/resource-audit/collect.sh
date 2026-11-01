@@ -14,9 +14,11 @@ PREV_LINK="${STATE_DIR}/previous"
 ALLOW_FILE="${RESOURCE_AUDIT_ALLOW:-${SCRIPT_DIR}/wildcard-allow.txt}"
 RETAIN_DAYS="${RESOURCE_AUDIT_RETAIN_DAYS:-90}"
 
-# webhook は unit の EnvironmentFile から渡る (~/.config/resource-audit/env が
-# discord-notify/env を上書きする)。手で叩くときは自分で export する。
-# 未設定でも収集は続行する (通知だけスキップ)。
+# 通知は discord-post (discord-ack の bot) で develop チャンネルへ送る。
+# webhook は discord-post が無い・落ちたときの予備で、unit の EnvironmentFile から渡る
+# (~/.config/resource-audit/env が discord-notify/env を上書きする)。手で叩くときは自分で export する。
+# どちらも使えなくても収集は続行する (通知だけスキップ)。
+DISCORD_POST="$HOME/.local/bin/discord-post"
 WEBHOOK_URL="${DISCORD_WEBHOOK_URL:-}"
 
 DEEP=0
@@ -235,12 +237,24 @@ done <<< "$NEW")
 
 log "new alerts:"; printf '%s\n' "$BODY" >&2
 
-if [ -z "$WEBHOOK_URL" ]; then
-  log "DISCORD_WEBHOOK_URL 未設定のため通知はスキップした"
+MSG=$(printf '**[resource-audit] %s で新たに閾値を超えました**\n%s\n\n`/resource-audit` で詳細レポートを出せます。' "$(hostname)" "$BODY")
+
+# bot (discord-ack) 経由で送る。リプライされたら ~/workspace/machine で作業できるよう出どころを残す。
+# timer から呼ばれるので claude のセッションは紐付けない (--no-session)。
+# discord-post が無い・落ちたときは従来どおり webhook へ直接送る
+# (閾値超えを知らせる経路なので、新しい部品だけに頼らない)。
+if [ -x "$DISCORD_POST" ] \
+  && printf '%s' "$MSG" | "$DISCORD_POST" -c develop --source resource-audit \
+       --cwd "$HOME/workspace/machine" --no-session >/dev/null; then
+  log "notified discord (discord-post)"
   exit 0
 fi
 
-MSG=$(printf '**[resource-audit] %s で新たに閾値を超えました**\n%s\n\n`/resource-audit` で詳細レポートを出せます。' "$(hostname)" "$BODY")
+if [ -z "$WEBHOOK_URL" ]; then
+  log "discord-post で送れず、DISCORD_WEBHOOK_URL も未設定のため通知はスキップした"
+  exit 0
+fi
+
 jq -n --arg c "$MSG" '{content: $c}' \
   | curl -sS -H 'Content-Type: application/json' -X POST -d @- "$WEBHOOK_URL" >/dev/null \
   && log "notified discord" || log "discord 通知に失敗した"
