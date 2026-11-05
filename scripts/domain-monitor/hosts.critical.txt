@@ -13,7 +13,9 @@ raim-tech.com           web
 www.raim-tech.com       web
 metalk.raim-tech.com    web
 csa.raim-tech.com       web
-sozan.raim-tech.com     web
+
+# sozan.raim-tech.com (操山中学ウェブサイト) はサイトを停止し、2026-10-20 に Lightsail と
+# Cloudflare のレコードを削除した (以後 NXDOMAIN)。応答しないのが正常なので 2026-11-05 に外した。
 
 # RelayChat のサポート / 利用規約 / プライバシーポリシー (2026-10-02 出現、Cloudflare proxy 配下)。
 # アプリ側から外部に案内される URL なので落ちたら気づくべき、として 2026-10-05 に critical にした。
