@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
-# develop の root 領域を restic で pve へバックアップする (L1 / root 側)。
+# develop の root 領域を restic で個人 Google Drive へバックアップする (L1 / root 側)。
 # root の systemd system unit から実行する。
+#
+# 2026-11-05 から Google Drive (gdrive:restic/develop-root) へ直送している。
+# それまでは pve (自宅) へ SFTP で送っていて、root 側は Drive へ複製していなかった。
+# develop を浜松オフィスへ移して pve に届かなくなったので、Drive に新しく repo を作った
+# (pve 側の旧 repo の履歴は引き継いでいない)。rclone の serve だけは karinto で動かす
+# (rclone-serve.sh の RCLONE_RUN_AS)。
 #
 # 対象:
 #   /etc                     ネットワーク・system unit・各種設定
@@ -20,7 +26,9 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-: "${RESTIC_REPOSITORY:=sftp:pve-backup:/rpool/backup/develop-root}"
+# RESTIC_REPOSITORY を渡さなければ、REPO_RCLONE_PATH を rclone serve 越しに使う
+: "${REPO_RCLONE_PATH:=gdrive:restic/develop-root}"
+: "${RCLONE_RUN_AS:=karinto}"
 : "${RESTIC_PASSWORD_FILE:=/root/.restic/develop-root.pass}"
 : "${RESTIC_CACHE_DIR:=/var/cache/restic}"
 : "${BACKUP_EXCLUDES:=$SCRIPT_DIR/excludes-root.txt}"
@@ -28,7 +36,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${KEEP_DAILY:=7}"
 : "${KEEP_WEEKLY:=4}"
 : "${KEEP_MONTHLY:=6}"
-export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_CACHE_DIR
+export RESTIC_PASSWORD_FILE RESTIC_CACHE_DIR RCLONE_RUN_AS
 
 TARGETS=(/etc /var/lib/docker/volumes /var/lib/tailscale /var/spool/cron /root
          /home/karinto/workspace/raim-tailnet-proxy/state)
@@ -48,10 +56,20 @@ existing=()
 for t in "${TARGETS[@]}"; do [ -e "$t" ] && existing+=("$t"); done
 
 tmp_json="$(mktemp -t restic-root-XXXXXX.json)"
-trap 'rm -f "$tmp_json" "$tmp_json.err"' EXIT
+# shellcheck source=rclone-serve.sh
+. "$SCRIPT_DIR/rclone-serve.sh"
+trap 'rm -f "$tmp_json" "$tmp_json.err"; stop_rclone_serve' EXIT
+
+if [ -z "${RESTIC_REPOSITORY:-}" ]; then
+  RCLONE="$(getent passwd "$RCLONE_RUN_AS" | cut -d: -f6)/.local/bin/rclone"
+  [ -x "$RCLONE" ] || RCLONE="$(command -v rclone)" || { echo "ts=$(now_iso) job=restic-$BACKUP_TAG status=error reason=\"rclone not found\""; exit 1; }
+  start_rclone_serve "$REPO_RCLONE_PATH" "restic-$BACKUP_TAG" || exit 1
+  RESTIC_REPOSITORY="$REST_REPO"
+fi
+export RESTIC_REPOSITORY
 
 start_ts=$(date +%s)
-"$RESTIC" backup \
+"$RESTIC" backup "${REPO_OPTS[@]}" \
   --json \
   --tag "$BACKUP_TAG" \
   --one-file-system \
@@ -85,7 +103,7 @@ printf '%s\n' "$line"
 
 if [ "$status" != "error" ]; then
   s=$(date +%s)
-  "$RESTIC" forget --tag "$BACKUP_TAG" \
+  "$RESTIC" forget "${REPO_OPTS[@]}" --tag "$BACKUP_TAG" \
     --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY" \
     >/dev/null 2>&1
   f_rc=$?
@@ -93,14 +111,14 @@ if [ "$status" != "error" ]; then
     "$(now_iso)" "$BACKUP_TAG" "$([ $f_rc -eq 0 ] && echo ok || echo error)" "$f_rc" "$(($(date +%s) - s))"
 fi
 
-# 週の初めだけ prune + check (HDD なので重い)
+# 週の初めだけ prune + check (Drive では prune が download + reupload になるので重い)
 if [ "$(date +%u)" = "7" ]; then
   s=$(date +%s)
-  "$RESTIC" forget --tag "$BACKUP_TAG" \
+  "$RESTIC" forget "${REPO_OPTS[@]}" --tag "$BACKUP_TAG" \
     --keep-daily "$KEEP_DAILY" --keep-weekly "$KEEP_WEEKLY" --keep-monthly "$KEEP_MONTHLY" \
     --prune >/dev/null 2>&1
   p_rc=$?
-  "$RESTIC" check >/dev/null 2>&1
+  "$RESTIC" check "${REPO_OPTS[@]}" >/dev/null 2>&1
   c_rc=$?
   printf 'ts=%s job=restic-%s-maintain status=%s prune_rc=%s check_rc=%s duration_s=%s\n' \
     "$(now_iso)" "$BACKUP_TAG" "$([ $p_rc -eq 0 ] && [ $c_rc -eq 0 ] && echo ok || echo error)" \

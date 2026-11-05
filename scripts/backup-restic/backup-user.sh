@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# develop の ~ を restic で pve へバックアップする (L1 / user 側)。
+# develop の ~ を restic で個人 Google Drive へバックアップする (L1 / user 側)。
+#
+# 2026-11-05 から Google Drive へ直送している。それまでは pve (自宅) の ZFS へ SFTP で
+# 送り、copy-l3.sh が Drive へ複製していたが、develop を浜松オフィスへ移して pve に
+# 届かなくなったため。送り先は旧 L3 のリポジトリ (gdrive:restic/develop-user) で、
+# L1 と同じ chunker で作ってあり履歴も入っているので、差分だけが送られる。
+# pve へ戻すときは RESTIC_REPOSITORY=sftp:pve-backup:/rpool/backup/develop-restic を渡す。
 #
 # 方針: このスクリプトは「測定するだけ」。判定も通知もしない。
 #   logfmt を stdout に吐き、journald -> Alloy -> VictoriaLogs -> Grafana Alerting が判定する。
@@ -12,7 +18,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # --- 設定 (env で上書き可) ---
-: "${RESTIC_REPOSITORY:=sftp:pve-backup:/rpool/backup/develop-restic}"
+# RESTIC_REPOSITORY を渡さなければ、REPO_RCLONE_PATH を rclone serve 越しに使う
+: "${REPO_RCLONE_PATH:=gdrive:restic/develop-user}"
 : "${RESTIC_PASSWORD_FILE:=$HOME/.local/state/restic/develop-user.pass}"
 : "${RESTIC_CACHE_DIR:=$HOME/.cache/restic}"
 : "${BACKUP_TARGET:=$HOME}"
@@ -21,7 +28,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 : "${KEEP_DAILY:=7}"
 : "${KEEP_WEEKLY:=4}"
 : "${KEEP_MONTHLY:=6}"
-export RESTIC_REPOSITORY RESTIC_PASSWORD_FILE RESTIC_CACHE_DIR
+export RESTIC_PASSWORD_FILE RESTIC_CACHE_DIR
 
 # systemd の PATH には ~/.local/bin が無い (services/feedscope.md の既知の罠)
 resolve_bin() {
@@ -35,6 +42,8 @@ resolve_bin() {
 
 RESTIC="$(resolve_bin restic)" || { echo "job=restic-$BACKUP_TAG status=error reason=\"restic not found\""; exit 1; }
 JQ="$(resolve_bin jq)" || JQ=""
+# shellcheck source=rclone-serve.sh
+. "$SCRIPT_DIR/rclone-serve.sh"
 
 log() { printf '%s\n' "$*"; }
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -47,12 +56,19 @@ if [ ! -s "$RESTIC_PASSWORD_FILE" ]; then
 fi
 
 tmp_json="$(mktemp -t restic-backup-XXXXXX.json)"
-trap 'rm -f "$tmp_json"' EXIT
+trap 'rm -f "$tmp_json"; stop_rclone_serve' EXIT
+
+if [ -z "${RESTIC_REPOSITORY:-}" ]; then
+  RCLONE="$(resolve_bin rclone)" || { log "ts=$(now_iso) job=restic-$BACKUP_TAG status=error reason=\"rclone not found\""; exit 1; }
+  start_rclone_serve "$REPO_RCLONE_PATH" "restic-$BACKUP_TAG" || exit 1
+  RESTIC_REPOSITORY="$REST_REPO"
+fi
+export RESTIC_REPOSITORY
 
 # --- backup ---
 #   --one-file-system : /home 配下に他のマウントは無いことを確認済み
 #   --exclude-caches  : CACHEDIR.TAG を持つディレクトリを自動で外す
-"$RESTIC" backup \
+"$RESTIC" backup "${REPO_OPTS[@]}" \
   --json \
   --tag "$BACKUP_TAG" \
   --one-file-system \
@@ -103,7 +119,7 @@ if [ "$status" != "error" ]; then
   f_start=$(date +%s)
   unlocked=0
   for attempt in 1 2; do
-    "$RESTIC" forget \
+    "$RESTIC" forget "${REPO_OPTS[@]}" \
       --tag "$BACKUP_TAG" \
       --keep-daily "$KEEP_DAILY" \
       --keep-weekly "$KEEP_WEEKLY" \
@@ -111,7 +127,7 @@ if [ "$status" != "error" ]; then
     f_rc=$?
     [ "$f_rc" -ne 11 ] && break
     [ "$attempt" -eq 2 ] && break
-    "$RESTIC" unlock >/dev/null 2>&1 && unlocked=1
+    "$RESTIC" unlock "${REPO_OPTS[@]}" >/dev/null 2>&1 && unlocked=1
   done
   f_dur=$(($(date +%s) - f_start))
   log "ts=$(now_iso) job=restic-$BACKUP_TAG-forget status=$([ $f_rc -eq 0 ] && echo ok || echo error) rc=$f_rc unlocked=$unlocked duration_s=$f_dur"
