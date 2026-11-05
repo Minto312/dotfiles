@@ -5,6 +5,9 @@
 #   backup-user   : 日次 02:30 JST
 #   maintain-user : 週次 日 00:00 JST
 #
+# 2026-11-05 に保存先を pve から Google Drive へ移し、L3 (pve -> Drive の複製) をやめた。
+# 旧版で入れた backup-l3 の unit が残っていれば、install のたびに止めて消す。
+#
 # 時間帯は既存 timer とぶつけないように選んである:
 #   resource-audit-collect 04:12 JST / domain-monitor-audit 04:37 JST (どちらも日次)
 # I/O は gha-runner と NVMe を共有しているので idle クラスに落とす
@@ -16,13 +19,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 units=(backup-user.service backup-user.timer restic-maintain.service restic-maintain.timer
-       backup-l3.service backup-l3.timer backup-heartbeat.service backup-heartbeat.timer)
+       backup-heartbeat.service backup-heartbeat.timer)
+retired=(backup-l3.service backup-l3.timer)
 
 uninstall() {
   for u in backup-user.timer restic-maintain.timer backup-l3.timer backup-heartbeat.timer; do
     systemctl --user disable --now "$u" 2>/dev/null || true
   done
-  for u in "${units[@]}"; do rm -f "$UNIT_DIR/$u"; done
+  for u in "${units[@]}" "${retired[@]}"; do rm -f "$UNIT_DIR/$u"; done
   systemctl --user daemon-reload
   echo "removed."
 }
@@ -31,9 +35,12 @@ if [ "${1:-}" = "--uninstall" ]; then uninstall; exit 0; fi
 
 mkdir -p "$UNIT_DIR"
 
+systemctl --user disable --now backup-l3.timer 2>/dev/null || true
+for u in "${retired[@]}"; do rm -f "$UNIT_DIR/$u"; done
+
 cat > "$UNIT_DIR/backup-user.service" <<EOF
 [Unit]
-Description=restic L1: develop の ~ を pve へバックアップ
+Description=restic L1: develop の ~ を Google Drive へバックアップ
 Documentation=file://$HOME/workspace/machine/storage/backup-develop.md
 
 [Service]
@@ -83,32 +90,6 @@ Persistent=true
 WantedBy=timers.target
 EOF
 
-cat > "$UNIT_DIR/backup-l3.service" <<EOF
-[Unit]
-Description=restic L3: L1 リポジトリを個人 Google Drive へ複製 (オフサイト)
-Documentation=file://$HOME/workspace/machine/storage/backup-develop.md
-
-[Service]
-Type=oneshot
-ExecStart=$SCRIPT_DIR/copy-l3.sh
-Nice=15
-IOSchedulingClass=idle
-TimeoutStartSec=8h
-EOF
-
-cat > "$UNIT_DIR/backup-l3.timer" <<'EOF'
-[Unit]
-Description=restic L3 の日次実行 (03:30 JST。L1 の後)
-
-[Timer]
-OnCalendar=*-*-* 03:30:00 Asia/Tokyo
-RandomizedDelaySec=600
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
 cat > "$UNIT_DIR/backup-heartbeat.service" <<EOF
 [Unit]
 Description=backup: 週次 heartbeat を Discord へ (沈黙を異常のサインにする)
@@ -134,7 +115,7 @@ WantedBy=timers.target
 EOF
 
 systemctl --user daemon-reload
-systemctl --user enable --now backup-user.timer restic-maintain.timer backup-l3.timer backup-heartbeat.timer
+systemctl --user enable --now backup-user.timer restic-maintain.timer backup-heartbeat.timer
 
 echo "installed:"
-systemctl --user list-timers --all --no-pager backup-user.timer restic-maintain.timer backup-l3.timer backup-heartbeat.timer
+systemctl --user list-timers --all --no-pager backup-user.timer restic-maintain.timer backup-heartbeat.timer
