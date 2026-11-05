@@ -32,9 +32,11 @@ RCLONE_SERVE_LOG=""
 REST_REPO=""
 REPO_OPTS=()
 
+# serve が先に死んでいても kill の失敗で止まらないようにする
+# (set -e の下では `a && kill` の kill 失敗で trap ごと抜け、ログが残る)
 stop_rclone_serve() {
-  [ -n "$RCLONE_SERVE_PID" ] && kill "$RCLONE_SERVE_PID" 2>/dev/null
-  [ -n "$RCLONE_SERVE_LOG" ] && rm -f "$RCLONE_SERVE_LOG"
+  if [ -n "$RCLONE_SERVE_PID" ]; then kill "$RCLONE_SERVE_PID" 2>/dev/null || true; fi
+  if [ -n "$RCLONE_SERVE_LOG" ]; then rm -f "$RCLONE_SERVE_LOG"; fi
   RCLONE_SERVE_PID=""
 }
 
@@ -55,7 +57,9 @@ start_rclone_serve() {
   local prefix=()
   if [ -n "$RCLONE_RUN_AS" ] && [ "$(id -un)" != "$RCLONE_RUN_AS" ]; then
     local home; home="$(getent passwd "$RCLONE_RUN_AS" | cut -d: -f6)"
-    chown "$RCLONE_RUN_AS" "$RCLONE_SERVE_LOG"
+    # 🔴 ログを $RCLONE_RUN_AS へ chown しないこと。ログは root のシェルが開いて
+    #    rclone に渡すので所有者を変える必要はなく、変えると /tmp (sticky) の
+    #    fs.protected_regular=2 により root でも開けず rclone が起動しない (2026-11-05)。
     prefix=(runuser -u "$RCLONE_RUN_AS" -- env HOME="$home")
   fi
   "${prefix[@]}" "$RCLONE" serve restic \
