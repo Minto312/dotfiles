@@ -1,21 +1,56 @@
 #!/usr/bin/env bash
-# playwright-mcp-browser — Playwright MCP を「使えるブラウザ」に繋ぐ
+# playwright-mcp-browser — Playwright MCP を lenovo の Chrome に繋ぐ
 #
 # ~/.claude.json の mcpServers.playwright.command をこれに差し替えて使う。
-# 既定は lenovo (人間が画面を直接見て触れる方) で、繋がらないときだけ develop の
-# 共有ブラウザ (shared-browser) に落ちる。
 #
-# ⚠ MCP はセッション開始時に 1 度だけ起動するので、ここで決めた行き先はセッション中
-#   固定される。起動時にどちらも動いていなければ lenovo を選ぶ (使う直前に
-#   `lenovo-browser up` を叩けばそのまま繋がる)。
-# ⚠ どちらのブラウザも「起動していなくても MCP は起動する」。ツールを呼んだときだけ
-#   ECONNREFUSED になるので、枠だけ取って Chrome をぶら下げないでいられる。
+# モード (LENOVO_BROWSER_MODE か ~/.local/state/lenovo-browser/mode。既定 extension):
+#   extension  lenovo の普段の Chrome (LENOVO_BROWSER_PROFILE、既定 "Profile 15") に
+#              Playwright 拡張機能経由で繋ぐ。エージェントが触れるのは自分のタブグループだけで、
+#              セッションごとに新しいウィンドウで始まる。接続はツールを初めて呼んだときで、
+#              それまで lenovo には何も起きない。トークン (~/.local/state/lenovo-browser/
+#              extension-token) があれば人の承認なしで繋がる
+#   cdp        旧方式。lenovo の専用プロファイル Chrome (lenovo-browser up) に CDP で繋ぎ、
+#              繋がらなければ develop の shared-browser に落ちる
+#
+# ⚠ MCP はセッション開始時に 1 度だけ起動するので、モードと行き先はセッション中固定。
 # ⚠ stdout は JSON-RPC の通り道なので、ここから余計な出力を混ぜない。
+# 背景と実測は machine/dev/lenovo-browser.md
 set -euo pipefail
 
 # ⚠ symlink 経由で呼ばれるので readlink -f を通す (素の dirname だと ~/.local/bin を指す)
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+STATE=$HOME/.local/state/lenovo-browser
+MODE=${LENOVO_BROWSER_MODE:-$(cat "$STATE/mode" 2>/dev/null || true)}
+MODE=${MODE:-extension}
+PROFILE=${LENOVO_BROWSER_PROFILE:-Profile 15}
 SHARED=${SHARED_BROWSER_BIN:-$HOME/dotfiles/scripts/shared-browser/shared-browser}
+
+# 版を固定した Playwright MCP。`npx @latest` は 1 セッションごとに npm exec の node が 1 本余分に
+# 常駐し (PSS 約 38 MiB)、起動も約 0.4 s 遅く、毎回 npm レジストリを見に行く。
+# 更新: npm install --prefix ~/.local/share/playwright-mcp @playwright/mcp@<版>
+PW_CLI=${PLAYWRIGHT_MCP_CLI:-$HOME/.local/share/playwright-mcp/node_modules/@playwright/mcp/cli.js}
+pw_mcp() {
+	if [ "${PLAYWRIGHT_MCP_DRYRUN:-}" = "1" ]; then
+		printf '%s\n' "$*"
+		exit 0
+	fi
+	if [ -f "$PW_CLI" ]; then
+		exec node "$PW_CLI" "$@"
+	fi
+	exec npx -y @playwright/mcp@latest "$@"
+}
+
+# shared-browser の枠を予約するときに claude の pid を控えさせる (gc で回収できるように)。
+# MCP は claude → (sh) → このスクリプト の順に起動されるので、祖先をたどって探す。
+claude_pid() {
+	local pid=$$ comm
+	while [ "$pid" -gt 1 ]; do
+		comm=$(cat "/proc/$pid/comm" 2>/dev/null) || return 0
+		[ "$comm" = "claude" ] && { echo "$pid"; return 0; }
+		pid=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | cut -d' ' -f2) || return 0
+		[ -n "$pid" ] || return 0
+	done
+}
 
 alive() { curl -fsS --max-time 2 "http://127.0.0.1:$1/json/version" >/dev/null 2>&1; }
 
@@ -30,7 +65,7 @@ pick_port() {
 	#    ⚠ `shared-browser port` はスロットを予約する副作用がある。lenovo が生きて
 	#      いるときは呼ばれないので、枠の消費は lenovo が使えないときだけ。
 	if [ -x "$SHARED" ]; then
-		shared=$("$SHARED" port 2>/dev/null | tr -cd '0-9') || shared=""
+		shared=$(CLAUDE_PID=${CLAUDE_PID:-$(claude_pid)} "$SHARED" port 2>/dev/null | tr -cd '0-9') || shared=""
 		[ -n "$shared" ] && alive "$shared" && { echo "$shared"; return; }
 	fi
 
@@ -38,6 +73,21 @@ pick_port() {
 	echo "$lenovo"
 }
 
-port=$(pick_port)
-[ "${PLAYWRIGHT_MCP_DRYRUN:-}" = "1" ] && { echo "http://127.0.0.1:$port"; exit 0; }
-exec npx -y @playwright/mcp@latest --cdp-endpoint "http://127.0.0.1:$port" "$@"
+case $MODE in
+	extension)
+		if [ -r "$STATE/extension-token" ]; then
+			PLAYWRIGHT_MCP_EXTENSION_TOKEN=$(cat "$STATE/extension-token")
+			export PLAYWRIGHT_MCP_EXTENSION_TOKEN
+		fi
+		pw_mcp --extension --executable-path "$HERE/lenovo-chrome-shim" \
+			--profile-dir-name "$PROFILE" "$@"
+		;;
+	cdp)
+		port=$(pick_port)
+		pw_mcp --cdp-endpoint "http://127.0.0.1:$port" "$@"
+		;;
+	*)
+		echo "playwright-mcp-browser: 不明なモード '$MODE' (extension か cdp)" >&2
+		exit 2
+		;;
+esac

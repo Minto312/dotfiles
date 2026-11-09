@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# lenovo-chrome-shim — Playwright MCP --extension の「ブラウザ起動」を lenovo の Chrome に振り替える
+#
+# playwright-mcp-browser が --executable-path にこれを渡す。Playwright MCP は拡張機能モードのとき、
+# 自分の中に中継 (ws://localhost:<port>) を立てて、ブラウザの実行ファイルを
+#   <exe> [--profile-directory=X] [--open-in-background] <connect URL>
+# の形で detached・stdio 無視で起動する。ここではその代わりに:
+#   1. 中継ポートを ssh -R で lenovo の localhost に通す (拡張機能が ws://localhost:<port> に来る)
+#   2. connect URL を lenovo の Chrome (Session 1) で開く。既定では新しいウィンドウ
+#      (エージェントのタブグループがそのウィンドウにまとまる。グループを後から別ウィンドウへ
+#       移すと接続が切れるので、最初から専用ウィンドウで始める)
+#   3. 呼び出し元の MCP が終わったらトンネルを畳む
+#
+# 環境変数:
+#   LENOVO_BROWSER_NEW_WINDOW=0  connect ページを既存ウィンドウのタブで開く
+#
+# ⚠ connect URL にはトークンが入りうるので、URL はログに出さない。
+# 背景と実測は machine/dev/lenovo-browser.md
+set -u
+STATE=$HOME/.local/state/lenovo-browser
+LOG=$STATE/ext-shim.log
+mkdir -p "$STATE"
+log() { printf '%s [%s] %s\n' "$(date -Is)" "$$" "$*" >>"$LOG"; }
+SSH=(ssh -o LogLevel=ERROR -o ConnectTimeout=10 -o BatchMode=yes)
+
+# ログが膨らみ続けないよう 1 MiB を超えたら後ろ半分だけ残す
+if [ -f "$LOG" ] && [ "$(stat -c %s "$LOG")" -gt 1048576 ]; then
+	tail -c 524288 "$LOG" >"$LOG.tmp" && mv "$LOG.tmp" "$LOG"
+fi
+
+url="${!#}"
+profile=""
+for a in "$@"; do
+	case $a in
+		--profile-directory=*) profile=${a#*=} ;;
+	esac
+done
+mcp_pid=$PPID
+
+port=$(python3 -I -c '
+import sys, urllib.parse as u
+q = u.parse_qs(u.urlparse(sys.argv[1]).query)
+r = q.get("mcpRelayUrl", [""])[0]
+print(u.urlparse(r).port or "" if r else "")' "$url")
+if [ -z "$port" ]; then
+	log "connect URL から中継ポートを取れない"
+	exit 1
+fi
+log "start mcp_pid=$mcp_pid port=$port profile=${profile:-<default>}"
+
+# 1. 中継ポートを lenovo へ (develop の Node は localhost を 127.0.0.1 に bind する。
+#    lenovo 側は localhost で ::1 と 127.0.0.1 の両方に listen する)
+"${SSH[@]}" -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+	-R "localhost:$port:localhost:$port" lenovo 2>>"$LOG" &
+tun=$!
+sleep 1.5
+if ! kill -0 "$tun" 2>/dev/null; then
+	log "トンネルが張れなかった"
+	exit 1
+fi
+
+# 2. connect URL を Session 1 の Chrome で開く。lenovo-interactive (Session 1 の sshd) は
+#    黙って止まることがあるので、通らなければ Session 0 からタスクを起こして 1 回だけやり直す
+q() { printf "%s" "$1" | sed "s/'/''/g"; }
+nw=""
+[ "${LENOVO_BROWSER_NEW_WINDOW:-1}" = "0" ] || nw="'--new-window'"
+ps="\$exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+\$al = @($nw)
+if ('$(q "$profile")' -ne '') { \$al += '--profile-directory=\"$(q "$profile")\"' }
+\$al += '$(q "$url")'
+Start-Process -FilePath \$exe -ArgumentList \$al"
+enc=$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
+open_page() { timeout 30 "${SSH[@]}" lenovo-interactive "pwsh -NoProfile -EncodedCommand $enc" >/dev/null 2>>"$LOG"; }
+if open_page; then
+	log "connect ページを開いた"
+else
+	log "lenovo-interactive が通らない。LenovoInteractiveSshd を起こしてやり直す"
+	restart=$(printf '%s' 'Start-ScheduledTask -TaskName LenovoInteractiveSshd' | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
+	timeout 30 "${SSH[@]}" lenovo "pwsh -NoProfile -EncodedCommand $restart" >/dev/null 2>>"$LOG"
+	sleep 3
+	if open_page; then
+		log "connect ページを開いた (再試行)"
+	else
+		log "connect ページを開けなかった"
+	fi
+fi
+
+# 3. MCP が生きている間だけトンネルを維持する
+while kill -0 "$mcp_pid" 2>/dev/null && kill -0 "$tun" 2>/dev/null; do sleep 5; done
+kill "$tun" 2>/dev/null
+log "stop (mcp alive=$(kill -0 "$mcp_pid" 2>/dev/null && echo yes || echo no))"
