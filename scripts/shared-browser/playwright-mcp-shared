@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # playwright-mcp-shared — このセッション専用の共有ブラウザに繋ぐ Playwright MCP
 #
-# ~/.claude.json の mcpServers.playwright.command をこれに差し替えて使う。
+# ⚠ 2026-11-09 から既定は lenovo の Chrome (playwright-mcp-browser の extension モード)。
+#   これは develop 側の共有ブラウザを明示的に使いたいとき用。
+#
 # `shared-browser port` は **枠を予約するだけで Chrome を起こさない**ので、
 # ブラウザを使わないセッションに Chrome がぶら下がることはない。
 #
@@ -10,9 +12,26 @@
 #
 # ⚠ stdout は JSON-RPC の通り道なので、ここから余計な出力を混ぜない。
 set -euo pipefail
-HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 
-port=$("$HERE/shared-browser" port 2>/dev/null | tr -cd '0-9') || port=""
+# claude の pid を控えさせる。これが無いと予約が gc で回収されず枠が尽きる
+# (2026-11 に 20 枠すべてが埋まった)。MCP は claude → (sh) → これ の順に起動される。
+claude_pid() {
+	local pid=$$ comm
+	while [ "$pid" -gt 1 ]; do
+		comm=$(cat "/proc/$pid/comm" 2>/dev/null) || return 0
+		[ "$comm" = "claude" ] && { echo "$pid"; return 0; }
+		pid=$(sed 's/.*) //' "/proc/$pid/stat" 2>/dev/null | cut -d' ' -f2) || return 0
+		[ -n "$pid" ] || return 0
+	done
+}
+
+port=$(CLAUDE_PID=${CLAUDE_PID:-$(claude_pid)} "$HERE/shared-browser" port 2>/dev/null | tr -cd '0-9') || port=""
 [ -n "$port" ] || port=9222   # 枠を取れなくても素の共有インスタンスには繋げる
 
+# 版を固定した Playwright MCP (playwright-mcp-browser と同じもの)
+PW_CLI=${PLAYWRIGHT_MCP_CLI:-$HOME/.local/share/playwright-mcp/node_modules/@playwright/mcp/cli.js}
+if [ -f "$PW_CLI" ]; then
+	exec node "$PW_CLI" --cdp-endpoint "http://127.0.0.1:$port" "$@"
+fi
 exec npx -y @playwright/mcp@latest --cdp-endpoint "http://127.0.0.1:$port" "$@"
