@@ -71,9 +71,30 @@ emit_rr() {
 }
 
 # drift を判定して、変化していれば dns_drift レコードを送る
+#
+# report_drift <label> <class> <alertable> <target> <apex> <cur-file> <rcode>...
+#
+# 末尾の rcode は、cur-file の中身を作った dig 全部の rcode。1 つでも
+# NOERROR / NXDOMAIN 以外 (SERVFAIL / TIMEOUT / REFUSED 等 = 答えが取れなかった) なら、
+# 判定ごと飛ばしてベースラインも更新しない。答えが取れなかったのを「レコードが全部消えた」と
+# 読むと、取れた次の回と合わせて「消えた → 戻った」の誤報が 2 時間鳴る
+# (2026-08-31・11-04・11-10 に実際に踏んだ。services/domain-monitor.md 参照)。
+# NXDOMAIN は「本当に名前が無い」なので通す (_dmarc を持たない apex など)。
+N_DRIFT_SKIP=0
 report_drift() {
   local label="$1" cls="$2" alertable="$3" target="$4" apex="$5" cur="$6"
-  local verdict sev
+  shift 6
+  local verdict sev rc
+  for rc in "$@"; do
+    case "$rc" in
+      NOERROR | NXDOMAIN) ;;
+      *)
+        N_DRIFT_SKIP=$((N_DRIFT_SKIP + 1))
+        dm_log "$label: rcode=$rc のため DNS 変化の判定を飛ばした (ベースラインは据え置き)"
+        return 0
+        ;;
+    esac
+  done
   # ⚠ コマンド置換で受けない (サブシェルになり DM_DRIFT_ADDED/_REMOVED が失われる)
   dm_drift "$label" "$cur"
   verdict="$DM_DRIFT_VERDICT"
@@ -253,13 +274,15 @@ for host in $(printf '%s\n' "${!HOST_KIND[@]}" | sort); do
   # address クラス (A/AAAA) は Cloudflare / CloudFront が返す IP が入れ替わるので
   # alertable=false にして記録だけ残す (誤アラートの温床になる)。
   emit_rr CNAME "$cname_vals" | sort > "$DM_RUN_DIR/stable.rr"
-  report_drift "$host.stable" stable true "$host" "$apex" "$DM_RUN_DIR/stable.rr"
+  report_drift "$host.stable" stable true "$host" "$apex" "$DM_RUN_DIR/stable.rr" \
+    "$cname_rcode"
 
   {
     emit_rr A "$a_vals"
     emit_rr AAAA "$aaaa_vals"
   } | sort > "$DM_RUN_DIR/address.rr"
-  report_drift "$host.address" address false "$host" "$apex" "$DM_RUN_DIR/address.rr"
+  report_drift "$host.address" address false "$host" "$apex" "$DM_RUN_DIR/address.rr" \
+    "$a_rcode" "$aaaa_rcode"
 
   dm_log "$body"
 done
@@ -299,7 +322,8 @@ while IFS= read -r apex; do
     emit_rr TXT "$txt_vals"
     emit_rr DMARC "$dmarc_vals"
   } | sort > "$DM_RUN_DIR/zone.rr"
-  report_drift "$apex.zone" zone true "$apex" "$apex" "$DM_RUN_DIR/zone.rr"
+  report_drift "$apex.zone" zone true "$apex" "$apex" "$DM_RUN_DIR/zone.rr" \
+    "$ns_rcode" "$mx_rcode" "$txt_rcode" "$dmarc_rcode"
 
   dm_log "$apex zone: ns=[${ns_vals}] spf=${spf_present} dmarc=${dmarc_present}"
 done < <(dm_apexes)
@@ -315,6 +339,7 @@ dm_otlp_add INFO \
   "check.kind=run" "run.network_ok=true" "run.skipped=false" \
   "run.targets=$((N_OK + N_FAIL + N_SKIP))" \
   "run.ok=$N_OK" "run.fail=$N_FAIL" "run.skip=$N_SKIP" \
+  "run.drift_skipped=$N_DRIFT_SKIP" \
   "run.duration_s=$DURATION"
 
 dm_otlp_flush
