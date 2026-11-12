@@ -11,8 +11,15 @@
 #       移すと接続が切れるので、最初から専用ウィンドウで始める)
 #   3. 呼び出し元の MCP が終わったらトンネルを畳む
 #
+# あわせて connect URL の client 名を、どのセッションか分かる名前に差し替える。拡張機能は
+# タブグループに「Playwright · <client 名>」と名前を付けるが、Playwright MCP が入れる client 名は
+# MCP クライアントの名前 (Claude Code ならどのセッションも claude-code) なので、そのままでは
+# どのグループがどのセッションのものか見分けられない。Herdr の中なら「ワークスペース名/タブ名」、
+# 外なら MCP の作業ディレクトリ名にする。同じ名前が重なると拡張機能が「(2)」を付ける。
+#
 # 環境変数:
 #   LENOVO_BROWSER_NEW_WINDOW=0  connect ページを既存ウィンドウのタブで開く
+#   LENOVO_BROWSER_GROUP_NAME    タブグループの名前 (「Playwright · 」の後ろ) を直接指定する
 #
 # ⚠ connect URL にはトークンが入りうるので、URL はログに出さない。
 # 背景と実測は machine/dev/lenovo-browser.md
@@ -46,7 +53,65 @@ if [ -z "$port" ]; then
 	log "connect URL から中継ポートを取れない"
 	exit 1
 fi
-log "start mcp_pid=$mcp_pid port=$port profile=${profile:-<default>}"
+
+# タブグループの名前 (冒頭のコメントを参照)。shim は MCP の環境をそのまま受け継ぐので
+# HERDR_* と、MCP の作業ディレクトリ (= Claude Code セッションの作業ディレクトリ) を使える。
+herdr_label() {   # <tab|workspace> <id> → label (取れなければ空)
+	timeout 3 "${HERDR_BIN_PATH:-herdr}" "$1" get "$2" 2>/dev/null | python3 -I -c '
+import json, sys
+r = json.load(sys.stdin).get("result", {})
+print((r.get("tab") or r.get("workspace") or {}).get("label", ""))' 2>/dev/null
+}
+group_name() {
+	if [ -n "${LENOVO_BROWSER_GROUP_NAME:-}" ]; then
+		printf '%s' "$LENOVO_BROWSER_GROUP_NAME"
+		return
+	fi
+	local ws="" tab=""
+	if [ -n "${HERDR_TAB_ID:-}" ]; then
+		tab=$(herdr_label tab "$HERDR_TAB_ID")
+		[ -n "${HERDR_WORKSPACE_ID:-}" ] && ws=$(herdr_label workspace "$HERDR_WORKSPACE_ID")
+	fi
+	if [ -z "$ws" ]; then
+		ws=$(readlink "/proc/$mcp_pid/cwd" 2>/dev/null || pwd)
+		ws=${ws##*/}
+	fi
+	printf '%s' "$ws${tab:+/$tab}"
+}
+group=$(group_name)
+# client={"name":...} の部分だけを書き換え、ほかのパラメータ (トークンを含む) は元の文字列のまま残す。
+# ⚠ 書き換えた URL は PowerShell の Start-Process に渡すので、空白や引用符を生で残さない
+#   (quote の safe="" ですべて %XX にする)。
+renamed=$(python3 -I -c '
+import json, re, sys, urllib.parse as u
+url, name = sys.argv[1], sys.argv[2]
+name = re.sub(r"\s+", " ", re.sub(r"[\x00-\x1f\x7f]", "", name)).strip()[:40]
+if not name:
+    sys.exit(1)
+base, _, query = url.partition("?")
+parts = query.split("&") if query else []
+idx = next((i for i, p in enumerate(parts) if p.startswith("client=")), None)
+client = {}
+if idx is not None:
+    try:
+        client = json.loads(u.unquote_plus(parts[idx][len("client="):]))
+    except ValueError:
+        pass
+if not isinstance(client, dict):
+    client = {}
+client["name"] = name
+param = "client=" + u.quote(json.dumps(client, ensure_ascii=False, separators=(",", ":")), safe="")
+if idx is None:
+    parts.append(param)
+else:
+    parts[idx] = param
+print(base + "?" + "&".join(parts))' "$url" "$group" 2>>"$LOG")
+if [ -n "$renamed" ]; then
+	url=$renamed
+else
+	group="(元の client 名のまま)"
+fi
+log "start mcp_pid=$mcp_pid port=$port profile=${profile:-<default>} group=$group"
 
 # 1. 中継ポートを lenovo へ (develop の Node は localhost を 127.0.0.1 に bind する。
 #    lenovo 側は localhost で ::1 と 127.0.0.1 の両方に listen する)
