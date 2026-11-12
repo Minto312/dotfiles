@@ -5,7 +5,8 @@
 # 送り、copy-l3.sh が Drive へ複製していたが、develop を浜松オフィスへ移して pve に
 # 届かなくなったため。送り先は旧 L3 のリポジトリ (gdrive:restic/develop-user) で、
 # L1 と同じ chunker で作ってあり履歴も入っているので、差分だけが送られる。
-# pve へ戻すときは RESTIC_REPOSITORY=sftp:pve-backup:/rpool/backup/develop-restic を渡す。
+# pve は 2026-11-05 に停止し、ssh の宛先 pve-backup も 11-12 に消したので、pve へ戻す経路は無い。
+# 旧リポジトリは pve の rpool/backup/develop-restic に残っている (machine/infra/README.md §3)。
 #
 # 方針: このスクリプトは「測定するだけ」。判定も通知もしない。
 #   logfmt を stdout に吐き、journald -> Alloy -> VictoriaLogs -> Grafana Alerting が判定する。
