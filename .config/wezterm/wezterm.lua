@@ -23,7 +23,12 @@ config.adjust_window_size_when_changing_font_size = false
 -- 可読性向上
 config.scrollback_lines = 10000
 config.default_cursor_style = "SteadyBar"
-config.color_scheme = "Tokyo Night"
+-- 配色は Tokyo Night。本文の文字色 (#c0caf5) は青みがかって読みにくいので、白にする。
+-- 組み込みの配色を写し、文字色だけを変えたものを登録して使う。
+local scheme = wezterm.color.get_builtin_schemes()["Tokyo Night"]
+scheme.foreground = "#ffffff"
+config.color_schemes = { ["Tokyo Night White Text"] = scheme }
+config.color_scheme = "Tokyo Night White Text"
 
 -- 背景設定
 -- ウィンドウ背景を素通しにして、その上に background.lua の黒ティントを 1 枚だけ敷く。
