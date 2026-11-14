@@ -134,8 +134,11 @@ ps="\$exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 if ('$(q "$profile")' -ne '') { \$al += '--profile-directory=\"$(q "$profile")\"' }
 \$al += '$(q "$url")'
 Start-Process -FilePath \$exe -ArgumentList \$al"
-enc=$(printf '%s' "$ps" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
-open_page() { timeout 30 "${SSH[@]}" lenovo-interactive "pwsh -NoProfile -EncodedCommand $enc" >/dev/null 2>>"$LOG"; }
+# 端末を付けない `ssh lenovo-interactive "<コマンド>"` は、利用者の画面にコンソールのウィンドウを開いて
+# フォーカスを奪う。lenovo-interactive-run は端末付きで動かすので、ウィンドウが出ない。
+# 出力は URL を含みうるので、ログには残さない
+LIR=$(dirname "$(readlink -f "$0")")/../lenovo-interactive/lenovo-interactive-run
+open_page() { timeout 30 "$LIR" "$ps" >/dev/null 2>>"$LOG"; }
 if open_page; then
 	log "connect ページを開いた"
 else

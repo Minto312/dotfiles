@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# lenovo-interactive-run: lenovo の Session 1 (利用者のデスクトップ) で PowerShell のコマンドを、
+# 画面にウィンドウを出さずに (利用者のフォーカスを奪わずに) 実行する。
+#
+#   lenovo-interactive-run '<PowerShell のコマンド>'
+#   lenovo-interactive-run - < script.ps1      標準入力のスクリプトを実行する (12 KB 程度まで)
+#
+# 出力 (標準出力と標準エラーをまとめたもの) を返し、コマンドの終了コードで終わる。接続できなければ 255。
+#
+# なぜ: `ssh lenovo-interactive "<コマンド>"` (端末なし) では、OpenSSH 9.5 for Windows が pwsh に
+# 見えるコンソールのウィンドウを作り、利用者の画面のフォーカスを奪う。端末を付けた接続 (ssh -tt) では、
+# sshd が conhost --headless の中でコマンドを動かすので、ウィンドウが出ない。端末付きの接続の癖はここで吸収する:
+#   1. 手元の入力が閉じると、コマンドが動く前に切れる → 入力を開いたままにする
+#   2. 出力に端末の制御文字と CR が混じる → 取り除く
+#   3. 終了コードが返らない → 最後に出す印 (__LIR_RC=<n>) から読む
+# ファイルの受け渡しは scp lenovo-interactive:… でよい (SFTP は sshd の中で動くのでウィンドウが出ない)。
+# 詳細: ~/workspace/machine/dev/lenovo-interactive-ssh.md
+set -uo pipefail
+
+if [ $# -ne 1 ]; then
+  sed -n '2,8p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+fi
+if [ "$1" = - ]; then cmd=$(cat); else cmd=$1; fi
+
+# コマンドは子の pwsh で動かす。`exit N` でも終了コードが $LASTEXITCODE に入る。
+# 外側の文字列は sshd が `pwsh -c <文字列>` に渡すので、二重引用符を使わない
+enc=$(printf '%s' "$cmd" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
+remote="pwsh -NoProfile -NonInteractive -EncodedCommand $enc; [Console]::Out.Write([Environment]::NewLine + '__LIR_RC=' + \$LASTEXITCODE + [Environment]::NewLine)"
+
+# 入力を開いたままにするための、何も書かないプロセス
+exec 3< <(sleep 86400)
+holder=$!
+rcfile=$(mktemp)
+trap 'kill "$holder" 2>/dev/null; rm -f "$rcfile"' EXIT
+trap 'exit 143' TERM INT HUP   # timeout などで止められても EXIT の後始末を走らせる
+
+ssh -tt -q -o LogLevel=ERROR lenovo-interactive "$remote" <&3 2>/dev/null |
+  python3 -I -c '
+import re, sys
+rcfile = sys.argv[1]
+csi = re.compile(r"\x1b\[([0-9;?]*)([ -/]*)([@-~])")
+osc = re.compile(r"\x1b\][^\x07\x1b]*(\x07|\x1b\\)")
+other = re.compile(r"\x1b[()][0-9A-Za-z]|\x1b[=>78]")
+def csi_sub(m):
+    n = m.group(1)
+    if m.group(3) in "CX" and "?" not in n:
+        return " " * int(n or "1")   # 右へ動かす・消す → 空白
+    return ""
+rc = None
+data = sys.stdin.buffer.read().decode("utf-8", "replace")
+data = osc.sub("", data)
+data = csi.sub(csi_sub, data)
+data = other.sub("", data)
+data = data.replace("\r\n", "\n").replace("\r", "\n")
+out = []
+for line in data.split("\n"):
+    m = re.fullmatch(r"\s*__LIR_RC=(-?\d*)\s*", line)
+    if m:
+        rc = m.group(1) or "0"
+        continue
+    out.append(line)
+text = "\n".join(out).strip("\n")
+if text:
+    sys.stdout.write(text + "\n")
+open(rcfile, "w").write(rc if rc is not None else "")
+' "$rcfile"
+ssh_rc=${PIPESTATUS[0]}
+
+rc=$(cat "$rcfile")
+if [ -n "$rc" ]; then
+  exit "$rc"
+fi
+# 印が無い: 接続できなかったか、途中で切れた
+[ "$ssh_rc" -ne 0 ] && exit "$ssh_rc"
+exit 255
