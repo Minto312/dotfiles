@@ -1,0 +1,142 @@
+<title>（資料の名前）</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;600;700&display=swap">
+<style>
+  /* Layout: PDF と同じ A4 の紙を机の上に並べて表示する。画面の幅が足りないときは紙ごと縮小し、印刷では紙 1 枚が A4 1 ページになる */
+  /* PDF 用の HTML を作るときは、.sheets と .measure とスクリプトを外し、body に紙を直接並べる。CSS の .page 以下はそのまま使える */
+  :root {
+    --desk: #e4e8e6;
+    --shadow: rgba(20, 30, 25, 0.18);
+    --paper: #ffffff;
+    --ink: #222222;
+    --ink-soft: #555555;
+    --ink-faint: #666666;
+    --ink-dim: #999999;
+    --rule: #aaaaaa;
+    --rule-light: #cfd8d3;
+    --rule-strong: #444444;
+    --th: #f2f2f2;
+    --accent: #1DBD4D;
+    --accent-ink: #138a3a;
+    --accent-soft: #f5fdf7;
+    --font-doc: "Noto Sans JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+  }
+  /* 紙はテーマにかかわらず白のまま。机の色だけテーマに合わせる */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --desk: #262b28; --shadow: rgba(0, 0, 0, 0.55); color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --desk: #262b28; --shadow: rgba(0, 0, 0, 0.55); color-scheme: dark; }
+
+  body {
+    margin: 0; background: var(--desk);
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 24px;
+  }
+  .sheets { display: flex; flex-direction: column; align-items: center; gap: 20px; zoom: var(--z, 1); }
+  .measure { position: absolute; visibility: hidden; width: 210mm; height: 0; pointer-events: none; }
+
+  /* ここから下は PDF 用の HTML と共通 */
+  .page, .page * { margin: 0; padding: 0; box-sizing: border-box; }
+  .page {
+    width: 210mm; height: 297mm; padding: 9mm 13mm 8mm; overflow: hidden; position: relative; flex: none;
+    background: var(--paper); color: var(--ink); box-shadow: 0 1px 3px var(--shadow), 0 10px 28px var(--shadow);
+    font-family: var(--font-doc); font-size: 8.6pt;
+  }
+  .page .head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2mm; }
+  .page .to { font-size: 9.4pt; line-height: 1.55; }
+  .page .docmeta { text-align: right; font-size: 8.4pt; color: var(--ink-soft); line-height: 1.5; }
+  .page h1 { font-size: 14.2pt; font-weight: 600; margin-bottom: 1.6mm; line-height: 1.4; }
+  .page .lead { font-size: 8.6pt; line-height: 1.6; padding-bottom: 2mm; border-bottom: 1.2px solid var(--rule-strong); }
+  .page h2 { font-size: 10pt; font-weight: 600; margin: 3.2mm 0 1.4mm; padding-left: 2.5mm; border-left: 4px solid var(--accent); line-height: 1.4; }
+  .page h2 .num { color: var(--accent); margin-right: 1.2mm; }
+  .page h2 .sub { font-size: 8.2pt; font-weight: 400; color: var(--ink-soft); margin-left: 1.5mm; }
+  .page p { font-size: 8.6pt; line-height: 1.6; margin-bottom: 1.1mm; }
+  .page .note { font-size: 7.6pt; color: var(--ink-soft); line-height: 1.5; margin-bottom: 1.1mm; }
+  .page table { width: 100%; border-collapse: collapse; font-size: 8.1pt; margin-bottom: 1.1mm; }
+  .page th, .page td { border: 0.5px solid var(--rule); padding: 0.8mm 2mm; vertical-align: top; line-height: 1.5; }
+  .page th { background: var(--th); font-weight: 600; text-align: left; }
+  .page td.r, .page th.r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .page td .ex { display: block; font-size: 7.3pt; color: var(--ink-faint); line-height: 1.35; }
+  .page tr.total td { font-weight: 600; background: var(--accent-soft); }
+  /* お願い・確認事項: 枠で囲み、番号を緑の四角に入れる */
+  .page ol.ask { list-style: none; counter-reset: ask; display: flex; flex-direction: column; gap: 1.4mm; }
+  .page ol.ask > li { counter-increment: ask; display: grid; grid-template-columns: auto 1fr; gap: 2.4mm; border: 0.6px solid var(--rule-light); border-radius: 1mm; padding: 1.4mm 2.6mm; }
+  .page ol.ask > li::before { content: counter(ask); display: grid; place-items: center; width: 4.8mm; height: 4.8mm; margin-top: 0.3mm; border: 1.1px solid var(--accent-ink); border-radius: 0.8mm; color: var(--accent-ink); font-weight: 700; font-size: 8.2pt; line-height: 1; }
+  .page ol.ask .body { font-size: 8.5pt; line-height: 1.58; min-width: 0; }
+  .page ol.ask b { display: block; font-weight: 700; margin-bottom: 0.2mm; }
+  .page .cont { display: flex; justify-content: space-between; font-size: 8.4pt; color: var(--ink-soft); padding-bottom: 1.6mm; margin-bottom: 1.2mm; border-bottom: 1.2px solid var(--rule-strong); }
+  .page .foot { margin-top: 3mm; padding-top: 1.4mm; border-top: 0.5px solid var(--rule-light); font-size: 7.4pt; color: var(--ink-soft); line-height: 1.5; }
+  .page .pnum { position: absolute; right: 13mm; bottom: 2.5mm; font-size: 7pt; color: var(--ink-dim); }
+  /* 余白の配分はページごとに上書きする（例: .page.p1 h2 { margin: … }）。描画して溢れないことを確かめながら合わせる */
+
+  /* 印刷: 画面と同じ紙をそのまま A4 1 ページずつに出す */
+  @media print {
+    @page { size: A4; margin: 0; }
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --desk: #ffffff; color-scheme: light; }
+    html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    :root { padding: 0 !important; }
+    body { padding: 0 !important; background: #ffffff; }
+    .sheets { display: block; zoom: 1 !important; }
+    .page { box-shadow: none; break-after: page; page-break-after: always; }
+    .page:last-child { break-after: auto; page-break-after: auto; }
+  }
+</style>
+
+<div class="measure" aria-hidden="true"></div>
+<main class="sheets">
+
+<div class="page p1">
+  <div class="head">
+    <div class="to">（宛先の会社名）<br>（役職）　（氏名） 様</div>
+    <div class="docmeta">（日付）<br>（差出人の会社名）</div>
+  </div>
+  <h1>（結論を述べる題名）</h1>
+  <div class="lead">（この資料で伝えることを 2 行ほどで書く。段落の途中で改行しない）</div>
+
+  <h2><span class="num">1.</span>（節の結論）<span class="sub">（補足を一行）</span></h2>
+  <p>（本文）</p>
+  <table>
+    <tr><th>項目</th><th class="r" style="width:24mm">金額</th></tr>
+    <tr><td>（項目）<span class="ex">（補足）</span></td><td class="r">0円<span class="ex">税抜 0円</span></td></tr>
+    <tr class="total"><td>合計</td><td class="r">0円</td></tr>
+  </table>
+
+  <h2><span class="num">2.</span>（お願いしたいことは N 点です）</h2>
+  <ol class="ask">
+    <li><div class="body"><b>（お願いの名前）</b>（説明）</div></li>
+    <li><div class="body"><b>（お願いの名前）</b>（説明）</div></li>
+  </ol>
+
+  <div class="pnum">1 / 2</div>
+</div>
+
+<div class="page p2">
+  <div class="cont"><span>（宛先） 御中　（資料名）（詳細）</span><span>（日付）　（差出人）</span></div>
+  <h2><span class="num">3.</span>（節の結論）</h2>
+  <p>（本文）</p>
+  <div class="foot">（出典と確認日。例: 料金は各社の公表情報（YYYY年M月D日確認）によります）</div>
+  <div class="pnum">2 / 2</div>
+</div>
+
+</main>
+
+<script>
+  // 紙（幅 210mm）が画面の幅に収まらないときは、紙ごと縮小する。印刷のときは CSS で等倍に戻す
+  (function () {
+    var root = document.documentElement;
+    var measure = document.querySelector('.measure');
+    function fit() {
+      var pageWidth = measure.getBoundingClientRect().width;
+      var cs = getComputedStyle(document.body);
+      var avail = document.body.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      if (!pageWidth || !avail) return;
+      root.style.setProperty('--z', Math.min(1, avail / pageWidth).toFixed(4));
+    }
+    fit();
+    window.addEventListener('resize', fit);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit);
+  })();
+</script>
