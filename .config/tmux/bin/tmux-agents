@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # tmux-agents: tmux でエージェント (Claude) の状態をウィンドウ (タブ) ごとにまとめて表示するための補助コマンド
 #
-#   tmux-agents claude [claude の引数]  状態を書き込むフックを付けて Claude を起動する
 #   tmux-agents list                    全ペインのエージェントの状態を一覧にする
 #   tmux-agents hook <event>            Claude のフックから呼ばれる (stdin に JSON)
 #   tmux-agents seen <window_id>        tmux のフックから呼ばれる (完了を待機に戻す)
 #   tmux-agents summary [socket_path]   ステータス行の右端の集計
+#
+# Claude のフックは全体の設定 (~/.claude/settings.json の hooks) に置く。どう起動した Claude でも状態が付き、
+# 動いている Claude も設定を読み直す。tmux の外 ($TMUX が無いとき) では何もしない。イベントと引数の対応:
+#   SessionStart → hook idle、UserPromptSubmit と PostToolUse → hook working、Notification → hook notify、
+#   Stop → hook stop、SessionEnd → hook end (コマンドの例: ~/.config/tmux/bin/tmux-agents hook working)
 set -uo pipefail
-
-SELF="$(readlink -f "$0")"
 
 # 操作する tmux サーバー: 明示されたソケット > 自分がいるサーバー ($TMUX) > 既定のサーバー
 t() {
@@ -28,13 +30,6 @@ cmd="${1:-}"
 shift || true
 
 case "$cmd" in
-  claude)
-    # 状態を書き込むフックを、このコマンドの場所を埋め込んだ JSON にして渡す (全体の設定は変えない)
-    h() { printf '[{"matcher":"","hooks":[{"type":"command","command":"%s hook %s"}]}]' "$SELF" "$1"; }
-    hooks="{\"hooks\":{\"SessionStart\":$(h idle),\"UserPromptSubmit\":$(h working),\"PostToolUse\":$(h working),\"Notification\":$(h notify),\"Stop\":$(h stop),\"SessionEnd\":$(h end)}}"
-    exec claude --settings "$hooks" "$@"
-    ;;
-
   hook)
     event="${1:-}"
     [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || { cat >/dev/null; exit 0; }
@@ -103,7 +98,7 @@ case "$cmd" in
     ;;
 
   *)
-    sed -n '2,10p' "$0"
+    sed -n '2,12p' "$0"
     exit 2
     ;;
 esac

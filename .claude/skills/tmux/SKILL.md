@@ -26,7 +26,7 @@ description: tmux のペインとウィンドウを見る・作る・操作す�
 # 全ペインの一覧 (ID、ウィンドウ、前面のコマンド、作業ディレクトリ、エージェントの名前と状態)
 tmux list-panes -a -F '#{pane_id} #{window_name} cmd=#{pane_current_command} path=#{pane_current_path} name=#{@agent_name} state=#{@agent_state}'
 
-# エージェントの状態だけ (tmux-agents claude で起動した Claude)
+# エージェントの状態だけ
 ~/.config/tmux/bin/tmux-agents list
 
 # 1 つのペインの値
@@ -61,7 +61,7 @@ tmux capture-pane -p -J -t "$pane" -S -200
 
 ## Claude を作業役として動かす
 
-`tmux-agents claude` で起動した Claude は、フックでペインの `@agent_state` に状態を書き込む。値は `working` (作業中)・`blocked` (確認や質問の画面で止まっている)・`done` (見ていないうちに終わった)・`idle` (待機)。
+Claude は、全体の設定 (`~/.claude/settings.json`) のフックで、ペインの `@agent_state` に状態を書き込む (どう起動しても付く)。値は `working` (作業中)・`blocked` (確認や質問の画面で止まっている)・`done` (見ていないうちに終わった)・`idle` (待機)。
 
 ```bash
 # 状態を待つ関数: wait_state <ペイン> <秒> <状態...>。どれかになれば 0、時間切れなら 1 で終わる
@@ -71,7 +71,7 @@ wait_state() { local p=$1 t=$2; shift 2; local end=$((SECONDS + t)) s w
 
 # 起動する。オプションはユーザーが普段使っているもの (ps -eo args | grep claude で確かめる)
 tmux set -p -t "$pane" @agent_name w1
-tmux send-keys -t "$pane" -l "~/.config/tmux/bin/tmux-agents claude --effort xhigh --dangerously-skip-permissions"
+tmux send-keys -t "$pane" -l "claude --effort xhigh --dangerously-skip-permissions"
 tmux send-keys -t "$pane" Enter
 wait_state "$pane" 60 idle          # 起動すると idle になる
 
@@ -95,10 +95,9 @@ tmux send-keys -t "$pane" Enter
 ```
 
 - 待つ処理は、Bash の `run_in_background` で動かし、終わった知らせを受けてから読む
-- **Claude Code は代替画面を使うので、`capture-pane` で読めるのは見えている画面だけ** (履歴は 0 行)。画面から消えた返答は読めない。長い報告は PR の本文やファイルに書かせ、そちらを読む
+- 全体の設定で Claude Code の代替画面を切ってある (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`) ので、`capture-pane -p -J -t "$pane" -S -<行数>` で画面から消えた返答も読める。この設定より前に起動した Claude は代替画面のままで、見えている画面しか読めない (`#{alternate_on}` が 1、`#{history_size}` が 0)。長い報告は PR の本文やファイルに書かせ、そちらを読む
 - `blocked` は、確認や質問の画面で止まっている。`capture-pane` で画面を読んでから、どう答えるかを決める (自分で決められなければユーザーに聞く)
 - `send-keys` で指示を送るのは、自分が起動した作業役のペインだけにする。ユーザーが使っているペイン (`pane_active` と `window_active` が 1 で、`session_attached` が 1 以上) や、入力欄にユーザーの入力があるペインには送らない
-- 素の `claude` で起動した Claude には `@agent_state` が付かない (状態は分からない)
 
 ## 閉じる
 
