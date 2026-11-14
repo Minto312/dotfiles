@@ -12,11 +12,9 @@ config.enable_tab_bar = false
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = true
 
--- フォント設定（CJKフォールバック付き）
-config.font = wezterm.font_with_fallback {
-  "JetBrains Mono",
-  "Noto Sans Mono CJK JP",
-}
+-- フォント: HackGen Console (英数字は Hack、日本語は源柔ゴシックを合成したもの。日本語も同じフォントで描く)
+-- lenovo にはユーザー単位で入れてある (%LOCALAPPDATA%\Microsoft\Windows\Fonts)
+config.font = wezterm.font("HackGen Console")
 config.font_size = 12.0
 config.line_height = 1.2
 -- 文字の大きさを変えたとき (Ctrl+↑ / Ctrl+↓)、ウィンドウの大きさを保ち、行数と桁数のほうを変える
@@ -25,7 +23,7 @@ config.adjust_window_size_when_changing_font_size = false
 -- 可読性向上
 config.scrollback_lines = 10000
 config.default_cursor_style = "SteadyBar"
-config.color_scheme = "AdventureTime"
+config.color_scheme = "Tokyo Night"
 
 -- 背景設定
 -- ウィンドウ背景を素通しにして、その上に background.lua の黒ティントを 1 枚だけ敷く。
