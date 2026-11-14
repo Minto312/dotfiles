@@ -19,6 +19,8 @@ config.font = wezterm.font_with_fallback {
 }
 config.font_size = 12.0
 config.line_height = 1.2
+-- 文字の大きさを変えたとき (Ctrl+↑ / Ctrl+↓)、ウィンドウの大きさを保ち、行数と桁数のほうを変える
+config.adjust_window_size_when_changing_font_size = false
 
 -- 可読性向上
 config.scrollback_lines = 10000
