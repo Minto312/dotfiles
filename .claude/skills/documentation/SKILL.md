@@ -101,7 +101,3 @@ pdftoppm -png -r 110 -f 2 -l 2 -y 900 -H 300 -W 909 "<出力>.pdf" /tmp/crop   #
 （未記入。知見がたまったら追記する）
 
 関係するスキル: Raim のブランドで作るなら `raim-slides`、ブランドに依らない作り方は `slidecraft`、Google Slides は `slide-deck`、pptx を Windows の Office で描画して確かめるなら `office-render`。
-
-## 記録
-
-- 2026-11-15: 先方向けの A4 2 枚の資料（PDF と artifact）を、コメントで 20 回ほど直したときの知見から作った（共通・HTML の節）。
