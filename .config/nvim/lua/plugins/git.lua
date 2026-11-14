@@ -8,7 +8,8 @@ return {
         keys = {
             { "<leader>gv", "<cmd>DiffviewToggle<cr>", desc = "Diffview (作業中の変更)" },
             -- origin の既定のブランチから分かれた後の変更 (PR の差分)
-            { "<leader>gV", "<cmd>DiffviewToggle origin/HEAD...HEAD<cr>", desc = "Diffview (PR の差分)" },
+            -- --imply-local: 変更後の側を git から取り出した内容でなく実際のファイルにして、LSP を使えるようにする
+            { "<leader>gV", "<cmd>DiffviewToggle origin/HEAD...HEAD --imply-local<cr>", desc = "Diffview (PR の差分)" },
         },
     },
 }
