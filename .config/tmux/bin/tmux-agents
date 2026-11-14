@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# tmux-agents: tmux でエージェント (Claude) の状態をウィンドウ (タブ) ごとにまとめて表示するための補助コマンド
+#
+#   tmux-agents claude [claude の引数]  状態を書き込むフックを付けて Claude を起動する
+#   tmux-agents list                    全ペインのエージェントの状態を一覧にする
+#   tmux-agents hook <event>            Claude のフックから呼ばれる (stdin に JSON)
+#   tmux-agents seen <window_id>        tmux のフックから呼ばれる (完了を待機に戻す)
+#   tmux-agents summary [socket_path]   ステータス行の右端の集計
+set -uo pipefail
+
+SELF="$(readlink -f "$0")"
+
+# 操作する tmux サーバー: 明示されたソケット > 自分がいるサーバー ($TMUX) > 既定のサーバー
+t() {
+  if [ -n "${TA_SOCKET_PATH:-}" ]; then tmux -S "$TA_SOCKET_PATH" "$@"
+  else tmux "$@"
+  fi
+}
+
+# ステータス行をすぐに描き直す (状態が変わったとき)
+redraw() {
+  t list-clients -F '#{client_name}' 2>/dev/null | while read -r c; do
+    t refresh-client -S -t "$c" 2>/dev/null
+  done
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  claude)
+    # 状態を書き込むフックを、このコマンドの場所を埋め込んだ JSON にして渡す (全体の設定は変えない)
+    h() { printf '[{"matcher":"","hooks":[{"type":"command","command":"%s hook %s"}]}]' "$SELF" "$1"; }
+    hooks="{\"hooks\":{\"SessionStart\":$(h idle),\"UserPromptSubmit\":$(h working),\"PostToolUse\":$(h working),\"Notification\":$(h notify),\"Stop\":$(h stop),\"SessionEnd\":$(h end)}}"
+    exec claude --settings "$hooks" "$@"
+    ;;
+
+  hook)
+    event="${1:-}"
+    [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || { cat >/dev/null; exit 0; }
+    input="$(cat)"
+    case "$event" in
+      working|idle|blocked) state="$event" ;;
+      notify)
+        typ="$(jq -r '.notification_type // ""' <<<"$input" 2>/dev/null)"
+        msg="$(jq -r '.message // ""' <<<"$input" 2>/dev/null)"
+        case "$typ" in
+          permission_prompt|elicitation_dialog) state=blocked ;;
+          "") grep -qiE 'permission|approv' <<<"$msg" && state=blocked || exit 0 ;;
+          *) exit 0 ;;  # idle_prompt (しばらく入力がない) などは状態を変えない
+        esac
+        ;;
+      stop)
+        # 終わったとき、そのペインのウィンドウを見ている (表示中で、つながっている) なら待機、そうでなければ完了
+        seen="$(t display -p -t "$TMUX_PANE" '#{&&:#{window_active},#{session_attached}}')"
+        [ "$seen" = 1 ] && state=idle || state=done
+        ;;
+      end)
+        t set -p -t "$TMUX_PANE" -u @agent_state
+        redraw
+        exit 0
+        ;;
+      *) exit 0 ;;
+    esac
+    t set -p -t "$TMUX_PANE" @agent_state "$state"
+    redraw
+    ;;
+
+  seen)
+    win="${1:?window_id が要る}"
+    t list-panes -t "$win" -F '#{pane_id} #{@agent_state}' | while read -r pane state; do
+      [ "$state" = done ] && t set -p -t "$pane" @agent_state idle
+    done
+    redraw
+    ;;
+
+  summary)
+    [ -n "${1:-}" ] && TA_SOCKET_PATH="$1"
+    # 利用者が Esc で止めたときは Claude の Stop フックが呼ばれない。そこで、作業中・確認待ちのペインだけ
+    # 画面の下の方を読み、作業中の行 (「…」の後に経過時間) も確認の画面も見えなければ待機に戻す。
+    t list-panes -a -F '#{pane_id} #{@agent_state}' | while read -r pane state; do
+      case "$state" in working|blocked) ;; *) continue ;; esac
+      screen="$(t capture-pane -p -t "$pane" -S -15 2>/dev/null)"
+      if grep -qE 'Do you want to|Esc to cancel|Enter to select' <<<"$screen"; then now=blocked
+      elif grep -qE '…[[:space:]]*\(' <<<"$screen"; then now=working
+      else now=idle
+      fi
+      [ "$now" != "$state" ] && t set -p -t "$pane" @agent_state "$now"
+    done
+    t list-panes -a -F '#{@agent_state}' | awk '
+      $1 == "working" { w++ } $1 == "blocked" { b++ } $1 == "done" { d++ } $1 == "idle" { i++ }
+      END {
+        if (b) printf "#[fg=red,bold]!%d#[fg=default,nobold] ", b
+        if (w) printf "#[fg=yellow]●%d#[fg=default] ", w
+        if (d) printf "#[fg=green]✓%d#[fg=default] ", d
+        if (i) printf "#[fg=colour244]○%d#[fg=default] ", i
+      }'
+    ;;
+
+  list)
+    t list-panes -a -F '#{session_name}:#{window_index}.#{pane_index}	#{@agent_state}	#{pane_title}' |
+      awk -F'\t' '$2 != "" { printf "%-12s %-8s %s\n", $1, $2, $3 }'
+    ;;
+
+  *)
+    sed -n '2,10p' "$0"
+    exit 2
+    ;;
+esac
