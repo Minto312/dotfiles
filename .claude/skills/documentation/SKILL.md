@@ -1,6 +1,6 @@
 ---
 name: documentation
-description: 最終的に人に見せる資料（HTML の artifact と PDF、Claude Docs、スライド）を作る・直すときの手順と注意。A4 の紙で渡す資料を artifact でも同じ見た目で見せる作り方、PDF の出力と確かめ方、artifact のコメントでの直し方、手元の機械（lenovo）への送り方。「資料を作って」「PDF にして」「artifact にして」「ペラ1枚で」「先方向けの資料」「印刷すると崩れる」「改ページがおかしい」「余白を配分して」などで起動。今は共通と HTML の節だけがあり、Docs とスライドの節は追記していく。
+description: 最終的に人に見せる資料（HTML の artifact と PDF、Claude Docs、スライド）を作る・直すときの手順と注意。A4 の紙で渡す資料を artifact でも同じ見た目で見せる作り方、PDF の出力と確かめ方、artifact のコメントでの直し方。「資料を作って」「PDF にして」「artifact にして」「ペラ1枚で」「先方向けの資料」「印刷すると崩れる」「改ページがおかしい」「余白を配分して」などで起動。今は共通と HTML の節だけがあり、Docs とスライドの節は追記していく。
 ---
 
 # documentation — 人に見せる資料の作り方
@@ -90,23 +90,6 @@ pdftoppm -png -r 110 -f 2 -l 2 -y 900 -H 300 -W 909 "<出力>.pdf" /tmp/crop   #
 - 小さい変更は Artifact の publish の `edits` で入れる。`old_str` は一意にし、行ごと消すときは行末の改行まで含める。
 - 終わったスレッドは resolve する。ユーザーが「一旦」などと書いて、続けて決める様子があるときは開けておく。
 - 消した結果、資料から無くなった情報（お問い合わせ先、費用の内訳など）があれば、ユーザーに伝える。
-
-### 2-7. 手元の機械（lenovo）へ送って開く
-
-```bash
-pdf="<出力>.pdf"
-scp -q -o BatchMode=yes "$pdf" "lenovo:Downloads/"
-name=$(basename "$pdf")
-enc=$(printf '%s\n%s' '[Console]::OutputEncoding = [Text.Encoding]::UTF8' \
-  "\$p = Join-Path \$env:USERPROFILE 'Downloads\\$name'; Start-Process \$p" \
-  | iconv -f UTF-8 -t UTF-16LE | base64 -w0)
-ssh -o BatchMode=yes lenovo-interactive "pwsh -NoProfile -EncodedCommand $enc"
-```
-
-- `lenovo-interactive` はログオン中のデスクトップで実行される。`lenovo` で実行すると画面に出ない。
-- PowerShell には `-EncodedCommand`（UTF-16LE を base64 にしたもの）で渡す。日本語のファイル名もこれで通る。
-- 前の版をビューアで開いたまま上書きすると、表示が古いままになる。開き直してもらう。
-- 「送って」と言われたときは、送ったあとに開くところまで行う。直すたびの上書きでは開かなくてよい。
 
 ## 3. Docs（Claude Docs）
 
