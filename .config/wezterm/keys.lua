@@ -32,4 +32,9 @@ return {
     mods = 'SHIFT',
     action = wezterm.action.SendKey { key = 'Enter', mods = 'ALT' },
   },
+  -- 文字の大きさを変える。disable_default_key_bindings で既定の Ctrl+= / Ctrl+- / Ctrl+0 は無効なので、ここで割り当てる。
+  -- 既定のキーにしない理由: JIS 配列では = に Shift が要り、Ctrl+- (Ctrl+_) は Claude Code の入力欄の取り消しと重なる。
+  { key = 'UpArrow', mods = 'CTRL', action = wezterm.action.IncreaseFontSize },
+  { key = 'DownArrow', mods = 'CTRL', action = wezterm.action.DecreaseFontSize },
+  { key = 'Home', mods = 'CTRL', action = wezterm.action.ResetFontSize },
 }

@@ -35,6 +35,10 @@ pane_history = true
 
 [ui]
 agent_panel_sort = "spaces"
+# ペインの枠で失う桁と行を減らす (2026-11-15)。
+# 隣り合うペインの境界線を 1 本にまとめ、ペインの領域の外周の枠を消す。
+pane_gaps = false
+pane_outer_borders = false
 
 [ui.sidebar.agents]
 # agents リストの行構成。既定は [["state_icon","machine","workspace","tab"], ["agent"]]。
