@@ -12,20 +12,28 @@ config.enable_tab_bar = false
 config.use_fancy_tab_bar = false
 config.hide_tab_bar_if_only_one_tab = true
 
--- フォント設定（CJKフォールバック付き）
-config.font = wezterm.font_with_fallback {
-  "JetBrains Mono",
-  "Noto Sans Mono CJK JP",
-}
+-- フォント: HackGen Console (英数字は Hack、日本語は源柔ゴシックを合成したもの。日本語も同じフォントで描く)
+-- lenovo にはユーザー単位で入れてある (%LOCALAPPDATA%\Microsoft\Windows\Fonts)
+config.font = wezterm.font("HackGen Console")
 config.font_size = 12.0
-config.line_height = 1.2
+-- HackGen は字形にもともと行間を含むので、行間は足さない (表示できる行数を増やす)
+config.line_height = 1.0
+-- 小さい文字 (96 DPI で約 11 画素) をくっきり描く。
+-- Light: ヒンティングを縦方向だけにして字形を保つ。HorizontalLcd: 液晶の赤・緑・青の画素を使ってなめらかにする (ClearType と同じ考え方)
+config.freetype_load_target = "Light"
+config.freetype_render_target = "HorizontalLcd"
 -- 文字の大きさを変えたとき (Ctrl+↑ / Ctrl+↓)、ウィンドウの大きさを保ち、行数と桁数のほうを変える
 config.adjust_window_size_when_changing_font_size = false
 
 -- 可読性向上
 config.scrollback_lines = 10000
 config.default_cursor_style = "SteadyBar"
-config.color_scheme = "AdventureTime"
+-- 配色は Tokyo Night。本文の文字色 (#c0caf5) は青みがかって読みにくいので、白にする。
+-- 組み込みの配色を写し、文字色だけを変えたものを登録して使う。
+local scheme = wezterm.color.get_builtin_schemes()["Tokyo Night"]
+scheme.foreground = "#ffffff"
+config.color_schemes = { ["Tokyo Night White Text"] = scheme }
+config.color_scheme = "Tokyo Night White Text"
 
 -- 背景設定
 -- ウィンドウ背景を素通しにして、その上に background.lua の黒ティントを 1 枚だけ敷く。
