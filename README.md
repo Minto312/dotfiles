@@ -11,6 +11,7 @@ Ubuntu 環境向けの個人用 dotfiles。シェル・エディタ・ターミ�
 | `.config/nvim/` | Neovim (lazy.nvim ベース。LSP / markdown プラグイン等) |
 | `.config/wezterm/` | WezTerm |
 | `.config/zellij/` | Zellij |
+| `.config/tmux/` | tmux (Claude の状態をウィンドウごとにまとめて表示する。`bin/tmux-agents claude` で起動した Claude が対象) |
 | `.config/systemd/user/` | systemd `--user` unit (mutagen-daemon / vllm-tunnel / dns-dangling-monitor) |
 | `.config/mimeapps.list` | 既定アプリ (claude-cli URL ハンドラ等) |
 | `.claude/` | Claude Code 設定 (`CLAUDE.md`, `settings.json`, `keybindings.json`, `agents/`, `skills/`, `commands/`, `scripts/`) |
