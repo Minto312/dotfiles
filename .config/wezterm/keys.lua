@@ -34,8 +34,7 @@ return {
   },
   -- 文字の大きさを変える。disable_default_key_bindings で既定の Ctrl+= / Ctrl+- / Ctrl+0 は無効なので、ここで割り当てる。
   -- 既定のキーにしない理由: JIS 配列では = に Shift が要り、Ctrl+- (Ctrl+_) は Claude Code の入力欄の取り消しと重なる。
-  -- Ctrl+Shift+0 は Windows が入力言語の切り替えに使うことがある。
-  { key = 'UpArrow', mods = 'CTRL|SHIFT', action = wezterm.action.IncreaseFontSize },
-  { key = 'DownArrow', mods = 'CTRL|SHIFT', action = wezterm.action.DecreaseFontSize },
-  { key = 'Home', mods = 'CTRL|SHIFT', action = wezterm.action.ResetFontSize },
+  { key = 'UpArrow', mods = 'CTRL', action = wezterm.action.IncreaseFontSize },
+  { key = 'DownArrow', mods = 'CTRL', action = wezterm.action.DecreaseFontSize },
+  { key = 'Home', mods = 'CTRL', action = wezterm.action.ResetFontSize },
 }
