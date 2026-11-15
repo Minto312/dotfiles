@@ -133,12 +133,25 @@ ps="\$exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
 \$al = @($nw)
 if ('$(q "$profile")' -ne '') { \$al += '--profile-directory=\"$(q "$profile")\"' }
 \$al += '$(q "$url")'
-Start-Process -FilePath \$exe -ArgumentList \$al"
+\$sw = [Diagnostics.Stopwatch]::StartNew()
+\$p = Start-Process -FilePath \$exe -ArgumentList \$al -PassThru
+\$done = \$p.WaitForExit(15000)
+'chrome.exe ms=' + \$sw.ElapsedMilliseconds + ' exited=' + \$done + \$(if (\$done) { ' code=' + \$p.ExitCode } else { '' })"
+# ⚠ chrome.exe が終わるまで待ってから pwsh を終える。lenovo の sshd は、接続が終わるとそこから起動した
+#   プロセスを殺す (50 ms 以上かかるものは生き残らなかった)。chrome.exe は起動中の Chrome に URL を渡して
+#   終わるが、それが間に合わないと connect ページが開かず、Playwright MCP が「30 秒で繋がらない」で失敗する。
+#   Chrome が起動していないときは chrome.exe 自身がブラウザになって終わらないので、15 秒で待つのをやめる
+#   (その後、接続の終了とともに殺される。これは前からある制約)。
 # 端末を付けない `ssh lenovo-interactive "<コマンド>"` は、利用者の画面にコンソールのウィンドウを開いて
 # フォーカスを奪う。lenovo-interactive-run は端末付きで動かすので、ウィンドウが出ない。
-# 出力は URL を含みうるので、ログには残さない
+# 出力には URL を含めない。chrome.exe にかかった時間の 1 行だけをログに残す
 LIR=$(dirname "$(readlink -f "$0")")/../lenovo-interactive/lenovo-interactive-run
-open_page() { timeout 30 "$LIR" "$ps" >/dev/null 2>>"$LOG"; }
+open_page() {
+	local out
+	out=$(timeout 30 "$LIR" "$ps" 2>>"$LOG") || return 1
+	printf '%s\n' "$out" | grep -m1 '^chrome\.exe ms=' | while IFS= read -r line; do log "$line"; done
+	return 0
+}
 if open_page; then
 	log "connect ページを開いた"
 else
