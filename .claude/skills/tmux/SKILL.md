@@ -70,15 +70,15 @@ wait_state() { local p=$1 t=$2; shift 2; local end=$((SECONDS + t)) s w
     for w in "$@"; do [ "$s" = "$w" ] && return 0; done; sleep 2; done; return 1; }
 
 # 起動する。オプションはユーザーが普段使っているもの (ps -eo args | grep claude で確かめる)
-tmux set -p -t "$pane" @agent_name w1
+tmux set -p -t "$pane" @agent_name a1
 tmux send-keys -t "$pane" -l "claude --effort xhigh --dangerously-skip-permissions"
 tmux send-keys -t "$pane" Enter
 wait_state "$pane" 60 idle          # 起動すると idle になる
 
 # 指示を送る。長い文や複数行は、ファイルからバッファに入れて括弧付きで貼り付けてから Enter
 tmux set -p -t "$pane" @agent_state sent   # 送ったことの印。フックが working・idle・done に書き換える
-tmux load-buffer -b "w1-prompt" /path/to/brief.md
-tmux paste-buffer -p -d -b "w1-prompt" -t "$pane"
+tmux load-buffer -b "a1-prompt" /path/to/brief.md
+tmux paste-buffer -p -d -b "a1-prompt" -t "$pane"
 sleep 1
 tmux send-keys -t "$pane" Enter
 
