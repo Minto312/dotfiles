@@ -22,6 +22,15 @@ config.line_height = 1.0
 -- Light: ヒンティングを縦方向だけにして字形を保つ。HorizontalLcd: 液晶の赤・緑・青の画素を使ってなめらかにする (ClearType と同じ考え方)
 config.freetype_load_target = "Light"
 config.freetype_render_target = "HorizontalLcd"
+-- 斜体は傾けずに描く。HackGen には斜体の書体が無いので、wezterm は字形を 0.2 傾けて斜体を作る。
+-- 傾けると字形の幅が広がる。全角の字は 2.25 セルを超えると、wezterm が半分の大きさに縮めて描く
+-- (濁点付きの仮名や画数の多い漢字。Claude の recap の行などで起きた)
+-- 薄い字 (Half) は、Light を求めて見つからないことで wezterm が薄く描く。斜体の規則でもそれを保つ
+config.font_rules = {
+  { italic = true, intensity = "Bold", font = wezterm.font("HackGen Console", { weight = "Bold", italic = false }) },
+  { italic = true, intensity = "Half", font = wezterm.font("HackGen Console", { weight = "Light", italic = false }) },
+  { italic = true, font = wezterm.font("HackGen Console", { italic = false }) },
+}
 -- 文字の大きさを変えたとき (Ctrl+↑ / Ctrl+↓)、ウィンドウの大きさを保ち、行数と桁数のほうを変える
 config.adjust_window_size_when_changing_font_size = false
 
