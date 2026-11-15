@@ -10,16 +10,20 @@
 #      (エージェントのタブグループがそのウィンドウにまとまる。グループを後から別ウィンドウへ
 #       移すと接続が切れるので、最初から専用ウィンドウで始める)
 #   3. 呼び出し元の MCP が終わったらトンネルを畳む
+#   4. 2 で新しくできたウィンドウを閉じる (セッションが終わってもウィンドウが残らないように)。
+#      人がグループへ渡したタブも同じウィンドウにあれば一緒に閉じる (Chrome の Ctrl+Shift+T で戻せる)
 #
 # あわせて connect URL の client 名を、どのセッションか分かる名前に差し替える。拡張機能は
 # タブグループに「Playwright · <client 名>」と名前を付けるが、Playwright MCP が入れる client 名は
 # MCP クライアントの名前 (Claude Code ならどのセッションも claude-code) なので、そのままでは
 # どのグループがどのセッションのものか見分けられない。Herdr の中なら「ワークスペース名/タブ名」、
-# 外なら MCP の作業ディレクトリ名にする。同じ名前が重なると拡張機能が「(2)」を付ける。
+# tmux の中で名前を付けたウィンドウならそのウィンドウ名 (「ワークスペース/作業」)、
+# どちらでもなければ MCP の作業ディレクトリ名にする。同じ名前が重なると拡張機能が「(2)」を付ける。
 #
 # 環境変数:
-#   LENOVO_BROWSER_NEW_WINDOW=0  connect ページを既存ウィンドウのタブで開く
-#   LENOVO_BROWSER_GROUP_NAME    タブグループの名前 (「Playwright · 」の後ろ) を直接指定する
+#   LENOVO_BROWSER_NEW_WINDOW=0      connect ページを既存ウィンドウのタブで開く (4 の片付けもしない)
+#   LENOVO_BROWSER_GROUP_NAME        タブグループの名前 (「Playwright · 」の後ろ) を直接指定する
+#   LENOVO_BROWSER_CLOSE_ON_EXIT=0   4 の片付けをしない
 #
 # ⚠ connect URL にはトークンが入りうるので、URL はログに出さない。
 # 背景と実測は machine/dev/lenovo-browser.md
@@ -55,7 +59,7 @@ if [ -z "$port" ]; then
 fi
 
 # タブグループの名前 (冒頭のコメントを参照)。shim は MCP の環境をそのまま受け継ぐので
-# HERDR_* と、MCP の作業ディレクトリ (= Claude Code セッションの作業ディレクトリ) を使える。
+# HERDR_*・TMUX_PANE と、MCP の作業ディレクトリ (= Claude Code セッションの作業ディレクトリ) を使える。
 herdr_label() {   # <tab|workspace> <id> → label (取れなければ空)
 	timeout 3 "${HERDR_BIN_PATH:-herdr}" "$1" get "$2" 2>/dev/null | python3 -I -c '
 import json, sys
@@ -71,6 +75,11 @@ group_name() {
 	if [ -n "${HERDR_TAB_ID:-}" ]; then
 		tab=$(herdr_label tab "$HERDR_TAB_ID")
 		[ -n "${HERDR_WORKSPACE_ID:-}" ] && ws=$(herdr_label workspace "$HERDR_WORKSPACE_ID")
+	fi
+	# tmux のウィンドウ名は、人が名前を付けたとき (automatic-rename が 0) だけ使う。
+	# tmux が自動で付けた名前は、作業の名前ではないため
+	if [ -z "$ws" ] && [ -z "$tab" ] && [ -n "${TMUX_PANE:-}" ]; then
+		ws=$(timeout 3 tmux display-message -p -t "$TMUX_PANE" '#{?#{automatic-rename},,#{window_name}}' 2>/dev/null)
 	fi
 	if [ -z "$ws" ]; then
 		ws=$(readlink "/proc/$mcp_pid/cwd" 2>/dev/null || pwd)
@@ -118,25 +127,63 @@ log "start mcp_pid=$mcp_pid port=$port profile=${profile:-<default>} group=$grou
 "${SSH[@]}" -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
 	-R "localhost:$port:localhost:$port" lenovo 2>>"$LOG" &
 tun=$!
+# Chrome のウィンドウを数える・閉じる C# (chrome-windows.cs) を lenovo の %TEMP% に置く (4 の片付けに使う)。
+# トンネルを待つ間に終わる。置けなくても接続はでき、片付けをしないだけ。
+# shim の中に書かないのは、lenovo-interactive-run に渡せるコマンドが 3,000 文字ほどで切れるため
+HERE=$(dirname "$(readlink -f "$0")")
+CS_REMOTE=AppData/Local/Temp/lenovo-browser-chrome-windows.cs
+copy_cs() { scp -q -o LogLevel=ERROR -o ConnectTimeout=10 -o BatchMode=yes "$HERE/chrome-windows.cs" "lenovo:$CS_REMOTE" 2>>"$LOG"; }
+copy_cs &
+cs_copy=$!
 sleep 1.5
 if ! kill -0 "$tun" 2>/dev/null; then
 	log "トンネルが張れなかった"
 	exit 1
 fi
+wait "$cs_copy" || log "chrome-windows.cs を lenovo に置けなかった (片付けはしない)"
 
 # 2. connect URL を Session 1 の Chrome で開く。lenovo-interactive (Session 1 の sshd) は
 #    黙って止まることがあるので、通らなければ Session 0 からタスクを起こして 1 回だけやり直す
 q() { printf "%s" "$1" | sed "s/'/''/g"; }
-nw=""
-[ "${LENOVO_BROWSER_NEW_WINDOW:-1}" = "0" ] || nw="'--new-window'"
-ps="\$exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
-\$al = @($nw)
-if ('$(q "$profile")' -ne '') { \$al += '--profile-directory=\"$(q "$profile")\"' }
-\$al += '$(q "$url")'
-\$sw = [Diagnostics.Stopwatch]::StartNew()
-\$p = Start-Process -FilePath \$exe -ArgumentList \$al -PassThru
-\$done = \$p.WaitForExit(15000)
-'chrome.exe ms=' + \$sw.ElapsedMilliseconds + ' exited=' + \$done + \$(if (\$done) { ' code=' + \$p.ExitCode } else { '' })"
+nw='$true'
+[ "${LENOVO_BROWSER_NEW_WINDOW:-1}" = "0" ] && nw='$false'
+# Chrome のウィンドウを数える・閉じる C# を読み込む (コンパイルに約 0.5 秒)。読み込めたら $track が $true。
+# ⚠ PowerShell の本体は、bash の展開を避けるため引用符付きの heredoc に置き、値は先頭の代入で渡す
+ps_lib=$(cat <<'PS'
+$cs = Join-Path $env:TEMP 'lenovo-browser-chrome-windows.cs'
+$track = $false
+if (Test-Path $cs) { try { Add-Type -Path $cs; $track = $true } catch { 'lib-error=' + ($_.Exception.Message -split "`n")[0] } }
+PS
+)
+ps_open_body=$(cat <<'PS'
+$al = @()
+if ($newWindow) { $al += '--new-window' }
+if ($profileName -ne '') { $al += '--profile-directory="' + $profileName + '"' }
+$al += $url
+$before = @()
+if ($newWindow -and $track) { $before = [LB.W]::ChromeWindows() }
+$sw = [Diagnostics.Stopwatch]::StartNew()
+$p = Start-Process -FilePath $exe -ArgumentList $al -PassThru
+$done = $p.WaitForExit(15000)
+'chrome.exe ms=' + $sw.ElapsedMilliseconds + ' exited=' + $done + $(if ($done) { ' code=' + $p.ExitCode } else { '' })
+# 新しくできたウィンドウを最大 3 秒待つ。2 枚以上できたら (別のセッションと同時に開いた)、どれか分からないので覚えない
+$new = @()
+if ($newWindow -and $track) {
+	for ($i = 0; $i -lt 30; $i++) {
+		$new = @([LB.W]::ChromeWindows() | Where-Object { $before -notcontains $_ })
+		if ($new.Count -gt 0) { break }
+		Start-Sleep -Milliseconds 100
+	}
+}
+'window=' + $(if ($new.Count -eq 1) { $new[0] } else { '' }) + ' new=' + $new.Count + ' track=' + $track
+PS
+)
+ps="\$newWindow = $nw
+\$exe = 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
+\$profileName = '$(q "$profile")'
+\$url = '$(q "$url")'
+$ps_lib
+$ps_open_body"
 # ⚠ chrome.exe が終わるまで待ってから pwsh を終える。lenovo の sshd は、接続が終わるとそこから起動した
 #   プロセスを殺す (50 ms 以上かかるものは生き残らなかった)。chrome.exe は起動中の Chrome に URL を渡して
 #   終わるが、それが間に合わないと connect ページが開かず、Playwright MCP が「30 秒で繋がらない」で失敗する。
@@ -144,12 +191,15 @@ if ('$(q "$profile")' -ne '') { \$al += '--profile-directory=\"$(q "$profile")\"
 #   (その後、接続の終了とともに殺される。これは前からある制約)。
 # 端末を付けない `ssh lenovo-interactive "<コマンド>"` は、利用者の画面にコンソールのウィンドウを開いて
 # フォーカスを奪う。lenovo-interactive-run は端末付きで動かすので、ウィンドウが出ない。
-# 出力には URL を含めない。chrome.exe にかかった時間の 1 行だけをログに残す
+# 出力には URL を含めない。chrome.exe にかかった時間と、新しくできたウィンドウの 2 行だけをログに残す
 LIR=$(dirname "$(readlink -f "$0")")/../lenovo-interactive/lenovo-interactive-run
+win=""
 open_page() {
-	local out
+	local out line
 	out=$(timeout 30 "$LIR" "$ps" 2>>"$LOG") || return 1
-	printf '%s\n' "$out" | grep -m1 '^chrome\.exe ms=' | while IFS= read -r line; do log "$line"; done
+	line=$(printf '%s\n' "$out" | grep -m1 '^chrome\.exe ms=') && log "$line"
+	line=$(printf '%s\n' "$out" | grep -m1 '^window=') && log "$line"
+	win=$(printf '%s\n' "$out" | sed -n 's/^window=\([0-9][0-9]*\) .*/\1/p' | head -n 1)
 	return 0
 }
 if open_page; then
@@ -170,3 +220,14 @@ fi
 while kill -0 "$mcp_pid" 2>/dev/null && kill -0 "$tun" 2>/dev/null; do sleep 5; done
 kill "$tun" 2>/dev/null
 log "stop (mcp alive=$(kill -0 "$mcp_pid" 2>/dev/null && echo yes || echo no))"
+
+# 4. 2 で新しくできたウィンドウを閉じる。エージェントが自分のタブを全部閉じていれば、もう無い (gone)。
+#    WM_CLOSE を送るので、×ボタンを押したのと同じ閉じ方になる
+if [ -n "$win" ] && [ "${LENOVO_BROWSER_CLOSE_ON_EXIT:-1}" != "0" ]; then
+	copy_cs   # 長いセッションの間に %TEMP% から消えていることがあるので置き直す
+	ps_close="\$hwnd = $win
+$ps_lib
+if (\$track) { [LB.W]::Close(\$hwnd) } else { 'lib-missing' }"
+	res=$(timeout 30 "$LIR" "$ps_close" 2>>"$LOG" | grep -m1 -E '^(gone|not-chrome|closed|post-failed|lib-missing|lib-error)')
+	log "window=$win を片付けた: ${res:-結果なし}"
+fi
