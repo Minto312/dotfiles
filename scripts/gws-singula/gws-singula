@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# シンギュラ (シンギュラリティバトルクエスト) のアカウント用の gws。
+# gws 0.22 は複数アカウント機能が削除されたため、設定ディレクトリごと分離する。
+# 暗号鍵は OS keyring（service=gws-cli はディレクトリ共通）を使わず、
+# ~/.config/gws-singula/.encryption_key に閉じる（既存の ~/.config/gws と干渉させない）。
+export GOOGLE_WORKSPACE_CLI_CONFIG_DIR="${HOME}/.config/gws-singula"
+export GOOGLE_WORKSPACE_CLI_KEYRING_BACKEND=file
+exec gws "$@"
