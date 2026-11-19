@@ -16,6 +16,7 @@ description: tmux のペインとウィンドウを見る・作る・操作す�
 ## 対象の指定
 
 - ペインは **ID (`%12` など) で指定する。** ペインの番号 (`main:2.1`) は、分割や削除で変わる。作るときに `-P -F '#{pane_id}'` で ID を受け取って使う
+- develop を再起動すると、tmux-resurrect がウィンドウとペインを戻し、Claude は同じ会話を開き直す。ただし、ペインの ID は振り直され、ペインのオプション (`@agent_name` など) は戻らない。再起動の前に覚えた ID は使わず、`list-panes` で引き直す
 - 自分のペインは `$TMUX_PANE`。`$TMUX` がなければ tmux の外で動いている
 - Claude の Bash には端末がないので、`tmux attach` はできない。画面を見せたいときは、ユーザーに `tmux attach` してもらう
 - 対象を省くと、ユーザーが今見ているペインやウィンドウが対象になる。ほかの人のペインを誤って操作しないように、`-t` を必ず付ける
@@ -108,4 +109,5 @@ tmux send-keys -t "$pane" Enter
 
 - 設定は dotfiles の `.config/tmux/tmux.conf` にあり、変更は dotfiles の worktree で行って PR を出す
 - 試すときは、試験用のサーバーで読み込ませる: `tmux -L <名前> -f <worktree>/.config/tmux/tmux.conf new-session -d -s main`
+- 再起動のあとに戻すプラグイン (tmux-resurrect と tmux-continuum、`bin/tmux-restore`) は、既定のサーバーでだけ読む。プラグインのスクリプト (`save.sh`・`restore.sh` など) は `-L` を受け取らず、環境変数 `TMUX` のサーバーを操作する。Claude の Bash から直接動かすと、既定のサーバーを保存・復元してしまう。試すときは、試験用のサーバーの `run-shell` から動かし、`-L <名前>` を付けて実行する `tmux` を PATH の先頭に置く
 - 動いているサーバーに反映するには `tmux source-file ~/.config/tmux/tmux.conf`
