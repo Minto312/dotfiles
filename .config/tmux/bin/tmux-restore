@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# tmux-restore: develop を再起動したあとに、tmux のウィンドウ・ペインと Claude の会話を戻すための補助コマンド
+#
+#   tmux-restore install           プラグイン (tmux-resurrect と tmux-continuum) を、版を固定して入れる
+#   tmux-restore load              tmux.conf から呼ばれる。プラグインを読み込む (入っていなければ何もしない)
+#   tmux-restore save-hook <file>  tmux-resurrect の保存のあとに呼ばれる。Claude のペインの行を書き換える
+#
+# 保存と復元は tmux-resurrect が行う。tmux-continuum が 5 分ごとに保存し、サーバーを起動したときに自動で戻す。
+# 保存先は ~/.local/share/tmux/resurrect/。手で保存するのは prefix + Ctrl+s、戻すのは prefix + Ctrl+r。
+# 自動で戻すのを止めたいときは ~/tmux_no_auto_restore を作る (tmux-continuum の決まり)。
+#
+# Claude のペインは、resurrect に任せると正しく戻らない:
+#   - resurrect はペインのシェルの子プロセスの引数を記録し、戻すときにそれを打ち込む。
+#     作業役の引数には最初の指示が入っているので、同じ指示がもう一度送られる
+#   - 引数の --resume <ID> は起動したときの会話で、/clear のあとの会話とは違う
+#   - シェルを経ずにペインのプロセスが直接 claude のときは、Claude の子プロセスを記録してしまう
+# そこで保存のあとに、Claude のペインの行を `claude-resume <会話の ID>` に書き換える。
+# tmux.conf の @resurrect-processes の "claude-resume->claude --resume *" で、戻すときに
+# `claude --resume <会話の ID>` を打ち込む (zsh の別名で --effort などが付く)。
+# 会話の ID は、Claude Code が動いている間に書く ~/.claude/sessions/<pid>.json の sessionId から取る。
+# このファイルは文書に書かれていない内部のファイルなので、Claude Code の更新で変わりうる。
+# 会話の ID が分からない Claude のペインは、シェルだけを戻す。
+set -uo pipefail
+
+plugins_dir="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/plugins"
+# 版を固定する (どちらも 2026-11-20 時点の最新のコミット)
+plugins=(
+  "tmux-resurrect https://github.com/tmux-plugins/tmux-resurrect cff343cf9e81983d3da0c8562b01616f12e8d548"
+  "tmux-continuum https://github.com/tmux-plugins/tmux-continuum 0698e8f4b17d6454c71bf5212895ec055c578da0"
+)
+
+install() {
+  local p name url rev dir
+  for p in "${plugins[@]}"; do
+    read -r name url rev <<<"$p"
+    dir="$plugins_dir/$name"
+    if [ ! -d "$dir/.git" ]; then
+      mkdir -p "$plugins_dir" && git clone --quiet "$url" "$dir" || return 1
+    fi
+    git -C "$dir" cat-file -e "$rev^{commit}" 2>/dev/null || git -C "$dir" fetch --quiet origin || return 1
+    git -C "$dir" -c advice.detachedHead=false checkout --quiet "$rev" || return 1
+    echo "$name: $(git -C "$dir" log -1 --format='%h %ad' --date=short)"
+  done
+}
+
+load() {
+  local resurrect="$plugins_dir/tmux-resurrect/resurrect.tmux"
+  local continuum="$plugins_dir/tmux-continuum/continuum.tmux"
+  [ -x "$resurrect" ] && [ -x "$continuum" ] || exit 0
+  "$resurrect"
+  "$continuum"
+  # continuum は、ほかの tmux のプロセスが動いていないときだけ、ステータス行に自動の保存を差し込む。
+  # Claude のフックなどが tmux を呼んでいる瞬間に読み込むと差し込まれず、自動の保存が止まるので、ここでも差し込む
+  local save="#($plugins_dir/tmux-continuum/scripts/continuum_save.sh)" cur
+  cur="$(tmux show -gv status-right)"
+  [[ "$cur" == *"$save"* ]] || tmux set -g status-right "$save$cur"
+}
+
+save_hook() {
+  local file="${1:-}" sessions="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions" map
+  [ -f "$file" ] || exit 0
+  map="$(mktemp)" || exit 1
+  trap 'rm -f "$map" "$file.tmp"' EXIT
+
+  # このサーバーのペインごとに、Claude の会話の ID を引く (セッション名・ウィンドウ番号・ペイン番号・会話の ID)。
+  # ペインの ID や sessions/<pid>.json の tmux の欄では引かない。ほかの tmux のサーバーのペインと番号がぶつかる
+  local s w p pid c id
+  tmux list-panes -a -F "#{session_name}	#{window_index}	#{pane_index}	#{pane_pid}" |
+    while IFS=$'\t' read -r s w p pid; do
+      for c in "$pid" $(pgrep -P "$pid"); do
+        [ "$(cat "/proc/$c/comm" 2>/dev/null)" = claude ] || continue
+        id="$(jq -r --argjson pid "$c" 'select(.pid == $pid) | .sessionId // empty' "$sessions/$c.json" 2>/dev/null)"
+        [[ "$id" =~ ^[0-9a-f-]{36}$ ]] && printf '%s\t%s\t%s\t%s\n' "$s" "$w" "$p" "$id"
+        break
+      done
+    done >"$map"
+
+  # 保存したファイルの pane の行: 種類・セッション名・ウィンドウ番号・…・ペイン番号 (6)・…・前面のコマンド (10)・:引数 (11)。
+  # 子プロセスが 2 つ以上あると、引数が改行で続きの行に分かれるので、種類の分からない行は捨てる
+  awk -F'\t' -v OFS='\t' '
+    NR == FNR { id[$1 FS $2 FS $3] = $4; next }
+    $1 == "pane" {
+      k = $2 FS $3 FS $6
+      if (k in id) { $10 = "claude"; $11 = ":claude-resume " id[k] }
+      else if ($10 == "claude") $11 = ":"
+      print; next
+    }
+    $1 == "window" || $1 == "state" || $1 == "grouped_session" { print }
+  ' "$map" "$file" >"$file.tmp" && mv "$file.tmp" "$file"
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  install) install ;;
+  load) load ;;
+  save-hook) save_hook "$@" ;;
+  *) sed -n '2,6p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
