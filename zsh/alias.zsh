@@ -61,7 +61,9 @@ mp4-comp() {
 # zsh スナップショット由来の出力崩れ対策。詳細: workspace/machine/troubleshooting/claude-code-bash-output-unreliable.md
 # --effort: 推論の深さ。有効値は low/medium/high/xhigh/max (claude --help)。
 #   以前指定していた ultracode は --effort の値ではないので黙って無視されていた。
-alias claude='SHELL=/usr/bin/bash claude --effort xhigh --dangerously-skip-permissions'
+#   2026-11-20 に xhigh から high に下げた (Opus 5.5 は同じ段階でも前のモデルより多く考える)。
+#   `claude --effort xhigh` と打つと --effort が 2 つになり、後に書いたほうが効く。
+alias claude='SHELL=/usr/bin/bash claude --effort high --dangerously-skip-permissions'
 alias codex='codex --dangerously-bypass-approvals-and-sandbox'
 
 dev() {
