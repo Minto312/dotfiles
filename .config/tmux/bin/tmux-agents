@@ -169,7 +169,7 @@ wait_ready() {
 
 # 1 つのペインの Claude を再起動する。restart_pane <ペイン> <keep|default|段階>。結果を 1 行出力する
 restart_pane() {
-  local p="$1" mode="${2:-keep}" pid c id eff cwd direct=0 i cmd newc newid sh
+  local p="$1" mode="${2:-keep}" pid c id eff cwd direct=0 i cmd newc newid sh perm
   local -a cdir=()
   pid="$(t display -p -t "$p" '#{pane_pid}' 2>/dev/null)" || { say "$p: ペインが無い"; return 1; }
   claude_pid "$pid" >/dev/null || { say "$p: Claude が動いていない"; return 1; }
@@ -187,6 +187,14 @@ restart_pane() {
     *) say "$p: effort の指定が分からない: $mode"; return 1 ;;
   esac
   [ "$c" = "$pid" ] && direct=1
+  # 権限の指定は、元の起動の引数から引き継ぐ。シェルが bash のペインなどでは zsh の別名が付かないため
+  # (別名の --dangerously-skip-permissions と重なっても害はない)
+  perm="$(tr '\0' '\n' <"/proc/$c/cmdline" 2>/dev/null | awk '
+    n { printf " --permission-mode %s", $0; n = 0 }
+    $0 == "--dangerously-skip-permissions" { printf " %s", $0 }
+    $0 == "--permission-mode" { n = 1 }
+    /^--permission-mode=[a-zA-Z]+$/ { printf " %s", $0 }')"
+  [[ "$perm" =~ ^(\ --dangerously-skip-permissions|\ --permission-mode[\ =][a-zA-Z]+)*$ ]] || perm=""
 
   [ "$direct" = 1 ] && t set -p -t "$p" remain-on-exit on
   t send-keys -t "$p" -l "/exit"
@@ -218,6 +226,7 @@ restart_pane() {
 
   cmd="claude --resume $id"
   [ -n "$eff" ] && cmd+=" --effort $eff"
+  cmd+="$perm"
   [ "$cwd" = - ] || [ "$(t display -p -t "$p" '#{pane_current_path}')" = "$cwd" ] || cmd="cd $(printf %q "$cwd") && $cmd"
   t set -p -t "$p" @agent_state starting   # 起動すると SessionStart のフックが idle にする
   t send-keys -t "$p" -l "$cmd"
