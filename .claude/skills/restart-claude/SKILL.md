@@ -1,0 +1,61 @@
+---
+name: restart-claude
+description: develop の tmux で動いている Claude Code をすべて再起動する。Claude Code の更新、既定の effort の変更、CLAUDE.md・スキル・設定の変更を、動いている Claude に反映するときに使う。各リーダーに連絡して作業役を再起動させ、リーダーから終わったと報告があったらリーダーを再起動し、最後に依頼を受けた Claude 自身を再起動する。会話は引き継ぐ。「すべての claude code を再起動させて」「Claude を全部再起動して」「全員再起動して」などで起動。
+---
+
+# restart-claude — すべての Claude Code を再起動する
+
+本体は `~/.config/tmux/bin/tmux-agents restart-all` (冒頭のコメントに仕組みがある)。依頼を受けた Claude は、対象を確かめて始め、ユーザーに伝えて止まるだけにする。再起動は tmux のサーバーの中で進み、この Claude も最後に再起動される。
+
+## 手順
+
+1. 対象を確かめる
+
+   ```bash
+   ~/.config/tmux/bin/tmux-agents panes   # ペイン ID・役割 (leader・worker・single)・場所・名前・状態・ウィンドウ名
+   ```
+
+   - 役割は、`@agent_name` が `leader` のペインがリーダー、リーダーがいるウィンドウのほかの Claude が作業役、それ以外が単独
+   - 対象は既定の tmux サーバーのペインだけ。tmux の外の Claude (`claude -p`、agent-web から動かしたもの、Claude Code のバックグラウンドのセッション) は再起動しない
+
+2. effort の扱いを決める
+
+   | 指定 | 使うとき | リーダー・単独・自分 | 作業役 |
+   |---|---|---|---|
+   | `keep` | 普段 (Claude Code の更新、CLAUDE.md・スキル・設定の変更) | 今の effort のまま | 今の effort のまま |
+   | `default` | ユーザーが既定の effort を変えて、それを反映したいと言ったとき | zsh の別名の既定 | 今の effort のまま |
+
+   - 作業役の effort は、リーダーが作業ごとに決めたものなので、どちらでも変えない
+   - 今の effort は、会話の記録の最後の応答の effort (なければ起動したときの `--effort`)。`--resume` は元の effort を引き継がないので、`--effort` を付けて開き直す
+
+3. 始める。理由は引用符を含まない短い語句にする (リーダーへの連絡に入る)
+
+   ```bash
+   tmux run-shell -b "$HOME/.config/tmux/bin/tmux-agents restart-all $TMUX_PANE keep Claude Code の更新を反映するため"
+   ```
+
+   - Bash の `run_in_background` で動かさない。この Claude が再起動されると、その子プロセスも終わるため
+   - 経過は `~/.local/state/tmux-agents/restart-<日時>.log` に書かれる
+
+4. ユーザーに、対象の数 (リーダー・作業役・単独)、記録の場所、このペインも最後に再起動されることを伝えて止まる。作業を続けると、このペインの再起動が待たされる
+
+5. 最後にこのペインが再起動されると、「[全体の再起動] 終わりました。結果は … にあります」と届く。記録を読み、再起動したペインと、飛ばしたペインとその理由をユーザーに伝える
+
+## 進み方
+
+1. リーダーそれぞれに、作業役の再起動を頼む連絡を送る (リーダーが待機になってから)。リーダーは `tmux-agents restart-workers <自分のペイン>` を動かす。終わるとリーダーのペインの `@restart` が `workers-done` になり、リーダーは返答を終えて止まる
+2. 同時に、単独のペインを 3 秒ずつずらして再起動する
+3. `@restart` が `workers-done` になったリーダーを再起動する
+4. 全部終わったら、依頼したペインを再起動し、結果を伝える指示を送る。依頼したペインがリーダーなら、その作業役は 1 と同時にここで再起動する
+
+1 つのペインの再起動は、次の条件を 2 回続けて確かめてから行う。満たさないうちは待ち、1 時間 (`TA_WAIT`) で飛ばす。リーダーが 2 時間 (`TA_LEADER_WAIT`) のうちに作業役の再起動を終えなければ、そのリーダーは再起動しない。
+
+- `@agent_state` が `idle` か `done` (作業中・確認の画面で止まっているペインは待つ)
+- Bash ツールの処理が残っていない (`run_in_background` で CI などを待っている Claude を再起動すると、終わった知らせが届かなくなる)
+- ユーザーが使っていない: そのペインを表示していない (依頼したペインは除く)、入力欄に入力がない
+
+再起動は、`/exit` で終わらせ、同じペインで `claude --resume <会話の ID> [--effort <段階>]` を打つ。ペインの ID・`@agent_name`・会話は変わらない。ペインのプロセスが直接 claude のペインは、シェルを起動し直してから打つ。
+
+## 途中で止める
+
+`pgrep -af 'tmux-agents restart'` で pid を確かめてから `kill` する (`pkill -f` は自分のシェルに一致して落ちる)。止めても、再起動の途中のペインはそのまま進む。
