@@ -18,6 +18,7 @@
 # tmux.conf の @resurrect-processes の "claude-resume->claude --resume *" で、戻すときに
 # `claude --resume <会話の ID> --effort <段階>` を打ち込む。zsh の別名が先に --effort high を付けるが、
 # 後に書いた --effort が効く。--resume は元の effort を引き継がないので、ここで記録する。
+# 会話の ID と effort は、同じディレクトリの `tmux-agents claude <pane_pid>` で引く (再起動と同じ取り方)。
 # 会話の ID は、Claude Code が動いている間に書く ~/.claude/sessions/<pid>.json の sessionId から取る。
 # effort は、起動したあとに応答があれば、会話の記録 (~/.claude/projects/*/<会話の ID>.jsonl) の最後の応答の
 # effort から取る (会話の途中の /effort も反映される)。応答がまだなければ、起動したときの --effort から取る。
@@ -60,26 +61,9 @@ load() {
   [[ "$cur" == *"$save"* ]] || tmux set -g status-right "$save$cur"
 }
 
-# Claude の effort を出力する (分からなければ何も出さない)。引数: Claude の pid、会話の ID、起動した時刻 (ミリ秒)
-effort_of() {
-  local c="$1" id="$2" started="$3" f e=""
-  f="$(ls "$projects"/*/"$id.jsonl" 2>/dev/null | head -1)"
-  if [ -n "$f" ]; then
-    # 最後の応答が起動したあとのものなら、その effort
-    e="$(tac "$f" | grep -m1 '"type":"assistant"' | jq -r --argjson t "$started" '
-      select(.type == "assistant" and .isSidechain != true)
-      | select((.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) * 1000 >= $t)
-      | .effort // empty' 2>/dev/null)"
-  fi
-  # 起動したあとの応答がなければ、起動したときの引数の最後の --effort
-  [ -n "$e" ] || e="$(tr '\0' '\n' <"/proc/$c/cmdline" 2>/dev/null |
-    awk 'n { e = $0; n = 0 } $0 == "--effort" { n = 1 } /^--effort=/ { e = substr($0, 10) } END { print e }')"
-  [[ "$e" =~ ^(low|medium|high|xhigh|max)$ ]] && printf '%s' "$e"
-}
-
 save_hook() {
-  local file="${1:-}" map
-  local sessions="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions" projects="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects"
+  local file="${1:-}" map ta
+  ta="$(dirname "$0")/tmux-agents"
   [ -f "$file" ] || exit 0
   map="$(mktemp)" || exit 1
   # 値をここで埋め込む (終わるときには関数の local の変数が無くなっている)
@@ -87,19 +71,12 @@ save_hook() {
 
   # このサーバーのペインごとに、Claude の会話の ID と effort を引く (セッション名・ウィンドウ番号・ペイン番号・会話の ID・effort)。
   # ペインの ID や sessions/<pid>.json の tmux の欄では引かない。ほかの tmux のサーバーのペインと番号がぶつかる
-  local s w p pid c id started
+  local s w p pid c id eff
   tmux list-panes -a -F "#{session_name}	#{window_index}	#{pane_index}	#{pane_pid}" |
     while IFS=$'\t' read -r s w p pid; do
-      for c in "$pid" $(pgrep -P "$pid"); do
-        [ "$(cat "/proc/$c/comm" 2>/dev/null)" = claude ] || continue
-        id="" started=0
-        read -r id started < <(jq -r --argjson pid "$c" \
-          'select(.pid == $pid) | "\(.sessionId // "-") \(.startedAt // 0)"' "$sessions/$c.json" 2>/dev/null)
-        [[ "${started:-}" =~ ^[0-9]+$ ]] || started=0
-        [[ "${id:-}" =~ ^[0-9a-f-]{36}$ ]] &&
-          printf '%s\t%s\t%s\t%s\t%s\n' "$s" "$w" "$p" "$id" "$(effort_of "$c" "$id" "$started")"
-        break
-      done
+      IFS=$'\t' read -r c id eff _ < <("$ta" claude "$pid" 2>/dev/null) || continue
+      [ "$eff" = - ] && eff=""
+      printf '%s\t%s\t%s\t%s\t%s\n' "$s" "$w" "$p" "$id" "$eff"
     done >"$map"
 
   # 保存したファイルの pane の行: 種類・セッション名・ウィンドウ番号・…・ペイン番号 (6)・…・前面のコマンド (10)・:引数 (11)。

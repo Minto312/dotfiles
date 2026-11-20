@@ -94,19 +94,15 @@ tmux send-keys -t "$pane" Escape
 tmux send-keys -t "$pane" -l "/exit"
 tmux send-keys -t "$pane" Enter
 
-# 同じ会話を、effort を変えて開き直す。会話の ID は終了する前に調べる
-pid=$(tmux display -p -t "$pane" '#{pane_pid}')
-c=$(pgrep -P "$pid" -x claude || echo "$pid")   # ペインのプロセスの子の claude。直接 claude が動いているペインはそのもの
-sid=$(jq -r .sessionId ~/.claude/sessions/"$c".json)
-#   (終了して、#{pane_current_command} でシェルに戻ったことを確かめてから)
-tmux set -p -t "$pane" @agent_state starting
-tmux send-keys -t "$pane" -l "claude --resume $sid --effort xhigh --dangerously-skip-permissions"
-tmux send-keys -t "$pane" Enter
-wait_state "$pane" 60 idle
+# 同じ会話のまま再起動する (effort を変えるとき、設定や CLAUDE.md を読み直させるとき)。
+# 待機になり、Bash ツールの処理が残っておらず、ユーザーが使っていないのを待ってから /exit し、
+# 同じペインで claude --resume <会話の ID> [--effort <段階>] を打つ。結果を 1 行出す (run_in_background で動かす)
+~/.config/tmux/bin/tmux-agents restart "$pane" xhigh   # effort を変える。keep は今のまま、default は既定
 ```
 
 - zsh の別名 `claude` は、先に `--effort high` を付ける。`--effort` が 2 つあると後に書いたほうが効くので、送ったコマンドの `--effort` が使われる (2026-11-20 に、会話の記録 (JSONL) の各応答の `"effort"` で確かめた)
-- `~/.claude/sessions/<pid>.json` は、Claude Code が動いている間に書く内部のファイルで、文書に書かれていない。更新で変わることがある
+- `tmux-agents restart` は、会話の ID を `~/.claude/sessions/<pid>.json` から、今の effort を会話の記録から取る。どちらも Claude Code の文書に書かれていない内部のファイルで、更新で変わることがある
+- すべての Claude をまとめて再起動するときは、`restart-claude` スキルを使う
 - 待つ処理は、Bash の `run_in_background` で動かし、終わった知らせを受けてから読む
 - 全体の設定で Claude Code の代替画面を切ってある (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`) ので、`capture-pane -p -J -t "$pane" -S -<行数>` で画面から消えた返答も読める。この設定より前に起動した Claude は代替画面のままで、見えている画面しか読めない (`#{alternate_on}` が 1、`#{history_size}` が 0)。長い報告は PR の本文やファイルに書かせ、そちらを読む
 - `blocked` は、確認や質問の画面で止まっている。`capture-pane` で画面を読んでから、どう答えるかを決める (自分で決められなければユーザーに聞く)

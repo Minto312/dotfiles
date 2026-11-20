@@ -5,11 +5,35 @@
 #   tmux-agents hook <event>            Claude のフックから呼ばれる (stdin に JSON)
 #   tmux-agents seen <window_id>        tmux のフックから呼ばれる (完了を待機に戻す)
 #   tmux-agents summary [socket_path]   ステータス行の右端の集計
+#   tmux-agents panes                   Claude のペインを、役割 (leader・worker・single) と一緒に一覧にする
+#   tmux-agents claude <pane_pid>       ペインの Claude の pid・会話の ID・effort・作業ディレクトリ (tmux-restore も使う)
+#   tmux-agents restart <pane> [keep|default|<段階>]
+#                                       Claude を、待機になるのを待ってから終了し、同じ会話を開き直す
+#   tmux-agents restart-workers <leader_pane>
+#                                       リーダーと同じウィンドウの作業役をすべて再起動する (effort は今のまま)
+#   tmux-agents restart-all <from_pane> [keep|default] [理由]
+#                                       すべての Claude を再起動する。tmux の run-shell -b から動かす (下の説明)
 #
 # Claude のフックは全体の設定 (~/.claude/settings.json の hooks) に置く。どう起動した Claude でも状態が付き、
 # 動いている Claude も設定を読み直す。tmux の外 ($TMUX が無いとき) では何もしない。イベントと引数の対応:
 #   SessionStart → hook idle、UserPromptSubmit と PostToolUse → hook working、Notification → hook notify、
 #   Stop → hook stop、SessionEnd → hook end (コマンドの例: ~/.config/tmux/bin/tmux-agents hook working)
+#
+# 再起動 (Claude Code の更新、既定の effort の変更、CLAUDE.md の変更を、動いている Claude に反映するため):
+#   - 役割は、@agent_name が leader のペインがリーダー、リーダーがいるウィンドウのほかの Claude が作業役、
+#     それ以外が単独 (single)
+#   - 1 つのペインの再起動は、@agent_state が idle か done になり、ユーザーが使っていない (そのペインを表示して
+#     いない、入力欄に入力がない) ことを 2 回続けて確かめてから、/exit を送り、`claude --resume <会話の ID>` を打つ。
+#     ペインのプロセスが直接 claude のときは、remain-on-exit で残したペインを respawn-pane でシェルにしてから打つ
+#   - effort: keep は今の effort (会話の記録の最後の応答、なければ起動したときの --effort)、default は付けない
+#     (zsh の別名の既定になる)。--resume は元の effort を引き継がないので、keep のときは --effort を付ける
+#   - restart-all の順: リーダーに連絡して作業役を再起動させる (リーダーが restart-workers を動かし、終わると
+#     リーダーのペインの @restart が workers-done になる) → 単独のペインを再起動する → workers-done になった
+#     リーダーを再起動する → 最後に依頼したペイン (from_pane) を再起動し、結果を伝える指示を送る。
+#     依頼したペインの Claude も終了させるので、その Claude の子プロセスではなく、tmux の run-shell -b で動かす。
+#     経過は ~/.local/state/tmux-agents/restart-<日時>.log に書く
+#   - 待つ時間の上限: 1 つのペインが待機になるまで TA_WAIT 秒 (既定 3600)、リーダーが作業役を再起動し終える
+#     まで TA_LEADER_WAIT 秒 (既定 7200)
 set -uo pipefail
 
 # 操作する tmux サーバー: 明示されたソケット > 自分がいるサーバー ($TMUX) > 既定のサーバー
@@ -24,6 +48,270 @@ redraw() {
   t list-clients -F '#{client_name}' 2>/dev/null | while read -r c; do
     t refresh-client -S -t "$c" 2>/dev/null
   done
+}
+
+# ---- Claude のペインの再起動 ----
+
+cfg="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+self_path="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+
+# 結果の行を、時刻を付けて出力する
+say() { echo "$(date +%T) $*"; }
+
+# ペインのプロセスか、その子のうち、Claude のものの pid を出力する
+claude_pid() {
+  local c
+  for c in "$1" $(pgrep -P "$1"); do
+    [ "$(cat "/proc/$c/comm" 2>/dev/null)" = claude ] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+# Claude の pid から「会話の ID TAB effort TAB 作業ディレクトリ」を出力する (分からない欄は -)。
+# 会話の ID と作業ディレクトリは、Claude Code が動いている間に書く sessions/<pid>.json から取る。effort は、起動した
+# あとに応答があれば会話の記録の最後の応答の effort (会話の途中の /effort も反映される)、なければ起動したときの
+# 最後の --effort。どちらも文書に書かれていない内部のファイルなので、Claude Code の更新で変わりうる
+claude_info() {
+  local c="$1" json="$cfg/sessions/$1.json" id started cwd f e=""
+  id="$(jq -r --argjson pid "$c" 'select(.pid == $pid) | .sessionId // empty' "$json" 2>/dev/null)"
+  [[ "$id" =~ ^[0-9a-f-]{36}$ ]] || return 1
+  started="$(jq -r '.startedAt // 0' "$json" 2>/dev/null)"
+  [[ "$started" =~ ^[0-9]+$ ]] || started=0
+  cwd="$(jq -r '.cwd // empty' "$json" 2>/dev/null)"
+  f="$(ls "$cfg"/projects/*/"$id.jsonl" 2>/dev/null | head -1)"
+  if [ -n "$f" ]; then
+    e="$(tac "$f" | grep -m1 '"type":"assistant"' | jq -r --argjson t "$started" '
+      select(.type == "assistant" and .isSidechain != true)
+      | select((.timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601) * 1000 >= $t)
+      | .effort // empty' 2>/dev/null)"
+  fi
+  [ -n "$e" ] || e="$(tr '\0' '\n' <"/proc/$c/cmdline" 2>/dev/null |
+    awk 'n { e = $0; n = 0 } $0 == "--effort" { n = 1 } /^--effort=/ { e = substr($0, 10) } END { print e }')"
+  [[ "$e" =~ ^(low|medium|high|xhigh|max)$ ]] || e=-
+  printf '%s\t%s\t%s\n' "$id" "$e" "${cwd:--}"
+}
+
+# Claude のペインを「ペイン ID TAB 役割 TAB 場所 TAB 名前 TAB 状態 TAB ウィンドウ名」で出力する
+panes_list() {
+  t list-panes -a -F '#{window_id}	#{pane_id}	#{session_name}:#{window_index}.#{pane_index}	#{?#{@agent_name},#{@agent_name},-}	#{?#{@agent_state},#{@agent_state},-}	#{pane_pid}	#{window_name}' |
+    while IFS=$'\t' read -r win pane loc name state pid wname; do
+      claude_pid "$pid" >/dev/null || continue
+      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$win" "$pane" "$loc" "$name" "$state" "$wname"
+    done | awk -F'\t' -v OFS='\t' '
+      { n++; l[n] = $0; if ($4 == "leader") lw[$1] = 1 }
+      END {
+        for (i = 1; i <= n; i++) {
+          split(l[i], f, "\t")
+          r = f[4] == "leader" ? "leader" : (f[1] in lw ? "worker" : "single")
+          print f[2], r, f[3], f[4], f[5], f[6]
+        }
+      }'
+}
+
+# 入力欄にユーザーの入力があれば 0。入力欄は画面の最後の ❯ の行。薄い文字 (ESC[2m) は入力の候補なので数えない
+has_input() {
+  local line
+  line="$(t capture-pane -p -e -t "$1" 2>/dev/null | grep '❯' | tail -1)"
+  line="${line#*❯}"
+  line="$(printf '%s' "$line" | LC_ALL=C sed -E 's/\x1b\[2m[^\x1b]*//g; s/\x1b\[[0-9;]*m//g; s/\xc2\xa0//g; s/[[:space:]]//g')"
+  [ -n "$line" ]
+}
+
+# Claude が Bash ツールのシェルを動かしていれば 0。返答を終えても run_in_background の処理が残っていることがあり、
+# 再起動するとその処理が消えて、終わった知らせが届かなくなる。Bash ツールのシェルは、Claude の子プロセスで
+# ~/.claude/shell-snapshots/ を読み込む bash -c (MCP のサーバーなどのほかの子プロセスとは、これで見分ける)
+has_shell_task() {
+  local k
+  for k in $(pgrep -P "$1"); do
+    tr '\0' ' ' <"/proc/$k/cmdline" 2>/dev/null | grep -q 'shell-snapshots/snapshot-' && return 0
+  done
+  return 1
+}
+
+# 再起動してよければ 0: 待機 (idle・done) で、Bash ツールの処理が残っておらず、ユーザーが使っていない
+# (そのペインを表示していない。TA_ALLOW_FOCUS に挙げたペインは表示していてもよい。入力欄に入力がない)。
+# 状態が無いペインは画面で判断する。よくないときは、理由を変数 why に入れる
+ready() {
+  local s c
+  why=""
+  s="$(t display -p -t "$1" '#{@agent_state}' 2>/dev/null)" || { why="ペインが無い"; return 1; }
+  if [ -z "$s" ]; then
+    if t capture-pane -p -t "$1" -S -15 | grep -qE 'Do you want to|Esc to cancel|Enter to select|…[[:space:]]*\('; then
+      why="画面が作業中か確認の画面"
+      return 1
+    fi
+    s=idle
+  fi
+  case "$s" in idle|done) ;; *) why="状態が $s"; return 1 ;; esac
+  c="$(claude_pid "$(t display -p -t "$1" '#{pane_pid}')")" || { why="Claude が動いていない"; return 1; }
+  has_shell_task "$c" && { why="Bash ツールの処理が残っている"; return 1; }
+  if [ "${TA_ALLOW_FOCUS:-}" != "$1" ] &&
+    [ "$(t display -p -t "$1" '#{&&:#{&&:#{pane_active},#{window_active}},#{session_attached}}')" = 1 ]; then
+    why="ユーザーがペインを表示している"
+    return 1
+  fi
+  has_input "$1" && { why="入力欄に入力がある"; return 1; }
+  return 0
+}
+
+# 再起動してよくなるまで待つ (2 回続けて確かめる)。TA_WAIT 秒で諦めて 1
+wait_ready() {
+  local end=$((SECONDS + ${TA_WAIT:-3600}))
+  while ((SECONDS < end)); do
+    if ready "$1"; then
+      sleep 2
+      ready "$1" && return 0
+    fi
+    sleep 5
+  done
+  return 1
+}
+
+# 1 つのペインの Claude を再起動する。restart_pane <ペイン> <keep|default|段階>。結果を 1 行出力する
+restart_pane() {
+  local p="$1" mode="${2:-keep}" pid c id eff cwd direct=0 i cmd newc newid sh
+  local -a cdir=()
+  pid="$(t display -p -t "$p" '#{pane_pid}' 2>/dev/null)" || { say "$p: ペインが無い"; return 1; }
+  claude_pid "$pid" >/dev/null || { say "$p: Claude が動いていない"; return 1; }
+  wait_ready "$p" || {
+    say "$p: 飛ばした。${TA_WAIT:-3600} 秒待っても再起動できる状態にならなかった (最後に見た理由: $why)"
+    return 1
+  }
+  # 待っている間に会話が変わることがある (/clear) ので、ここで引く
+  c="$(claude_pid "$pid")" || { say "$p: Claude が終わっていた"; return 1; }
+  IFS=$'\t' read -r id eff cwd < <(claude_info "$c") || { say "$p: 飛ばした。会話の ID が分からない"; return 1; }
+  case "$mode" in
+    keep) [ "$eff" = - ] && eff="" ;;
+    default) eff="" ;;
+    low|medium|high|xhigh|max) eff="$mode" ;;
+    *) say "$p: effort の指定が分からない: $mode"; return 1 ;;
+  esac
+  [ "$c" = "$pid" ] && direct=1
+
+  [ "$direct" = 1 ] && t set -p -t "$p" remain-on-exit on
+  t send-keys -t "$p" -l "/exit"
+  sleep 0.5
+  t send-keys -t "$p" Enter
+  for i in $(seq 60); do kill -0 "$c" 2>/dev/null || break; sleep 1; done
+  if kill -0 "$c" 2>/dev/null; then
+    [ "$direct" = 1 ] && t set -p -t "$p" -u remain-on-exit
+    say "$p: /exit で終わらなかった (会話 $id)"
+    return 1
+  fi
+  if [ "$direct" = 1 ]; then
+    # シェルを明示する。respawn-pane にコマンドを渡さないと、ペインを作ったときのコマンド (claude) がまた動く
+    [ "$cwd" = - ] || cdir=(-c "$cwd")
+    t respawn-pane -t "$p" "${cdir[@]}" "$(t show -gv default-shell)" ||
+      { say "$p: シェルを起動できなかった (会話 $id)"; return 1; }
+    t set -p -t "$p" -u remain-on-exit
+  fi
+  # 前面がシェルになってから打つ (Claude などに打ち込まないため)
+  for i in $(seq 15); do
+    sh="$(t display -p -t "$p" '#{pane_current_command}')"
+    case "$sh" in zsh|bash|sh|fish) break ;; esac
+    sleep 1
+  done
+  case "$sh" in
+    zsh|bash|sh|fish) sleep 1 ;;
+    *) say "$p: 前面がシェルにならないので、開き直していない (前面: $sh。手で claude --resume $id を打つ)"; return 1 ;;
+  esac
+
+  cmd="claude --resume $id"
+  [ -n "$eff" ] && cmd+=" --effort $eff"
+  [ "$cwd" = - ] || [ "$(t display -p -t "$p" '#{pane_current_path}')" = "$cwd" ] || cmd="cd $(printf %q "$cwd") && $cmd"
+  t set -p -t "$p" @agent_state starting   # 起動すると SessionStart のフックが idle にする
+  t send-keys -t "$p" -l "$cmd"
+  t send-keys -t "$p" Enter
+  for i in $(seq 120); do
+    [ "$(t display -p -t "$p" '#{@agent_state}')" = idle ] && break
+    sleep 1
+  done
+  newc="$(claude_pid "$(t display -p -t "$p" '#{pane_pid}')")" || { say "$p: 起動しなかった (会話 $id)"; return 1; }
+  newid="$(jq -r '.sessionId // empty' "$cfg/sessions/$newc.json" 2>/dev/null)"
+  [ "$(t display -p -t "$p" '#{@agent_state}')" = idle ] || { say "$p: 起動したが待機にならない (会話 $id)"; return 1; }
+  [ "$newid" = "$id" ] || { say "$p: 起動したが会話が違う ($id のはずが ${newid:-不明})"; return 1; }
+  say "$p: 再起動した (会話 $id、effort ${eff:-既定})"
+}
+
+# リーダーと同じウィンドウの作業役を、並べて再起動する。終わったらリーダーのペインの @restart を workers-done にする
+restart_workers() {
+  local leader="$1" win p
+  win="$(t display -p -t "$leader" '#{window_id}')" || { say "$leader: ペインが無い"; return 1; }
+  t list-panes -t "$win" -F '#{pane_id} #{pane_pid}' | {
+    while read -r p pid; do
+      [ "$p" = "$leader" ] && continue
+      claude_pid "$pid" >/dev/null || continue
+      restart_pane "$p" keep &
+      sleep 3
+    done
+    wait
+  }
+  t set -p -t "$leader" @restart workers-done
+}
+
+# リーダーに、作業役の再起動を頼む
+notify_leader() {
+  local l="$1" from="$2" reason="$3" buf="restart-${1#%}-$$"
+  wait_ready "$l" || { say "$l: リーダーが待機にならないので、連絡できなかった"; return 1; }
+  t set -p -t "$l" @restart requested
+  t load-buffer -b "$buf" - <<EOF
+[全体の再起動] ユーザーの依頼で、develop の Claude Code をすべて再起動します (理由: ${reason:-指定なし})。リーダーのあなた ($l) は、次のとおり進めてください。
+1. このウィンドウの作業役に、新しい作業を渡すのをやめる。作業役に指示を送っている途中なら、送り終えてよい
+2. Bash の run_in_background で \`$self_path restart-workers $l\` を動かす。作業役が待機になるのを待ってから、1 つずつ同じ会話を開き直す (effort は今のまま。ペインの ID と名前は変わらない)。ユーザーが使っている作業役や、確認の画面で止まっている作業役は、待っても待機にならなければ飛ばす
+3. 終わったら、返答に結果 (再起動した作業役と、飛ばした作業役とその理由) を 3 行以内で書いて止まる。結果は全体の再起動の記録にも書かれるので、別のファイルに残さなくてよい。あなたが止まると、$from から動いている処理が、あなたを同じ会話のまま再起動する
+EOF
+  t set -p -t "$l" @agent_state sent
+  t paste-buffer -p -d -b "$buf" -t "$l"
+  sleep 1
+  t send-keys -t "$l" Enter
+  say "$l: リーダーに連絡した"
+}
+
+# リーダー 1 つの流れ: 連絡 → 作業役の再起動が終わるのを待つ → リーダーを再起動
+leader_flow() {
+  local l="$1" from="$2" mode="$3" reason="$4" end
+  notify_leader "$l" "$from" "$reason" || return 1
+  end=$((SECONDS + ${TA_LEADER_WAIT:-7200}))
+  until [ "$(t display -p -t "$l" '#{@restart}' 2>/dev/null)" = workers-done ]; do
+    ((SECONDS < end)) || { say "$l: リーダーが作業役の再起動を終えなかったので、リーダーは再起動していない"; return 1; }
+    sleep 10
+  done
+  say "$l: リーダーから、作業役の再起動が終わったと報告があった"
+  t set -p -t "$l" -u @restart
+  restart_pane "$l" "$mode"
+}
+
+restart_all() {
+  local from="${1:?依頼したペインが要る}" mode="${2:-keep}" reason="${3:-}" log pane role loc name state wname
+  local -a leaders=() singles=()
+  mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}/tmux-agents"
+  log="${XDG_STATE_HOME:-$HOME/.local/state}/tmux-agents/restart-$(date +%Y%m%dT%H%M%S).log"
+  exec >>"$log" 2>&1
+  t set -g @restart_log "$log"   # リーダーが動かす restart-workers も、結果をここに書く
+  echo "開始 $(date '+%F %T') 依頼したペイン=$from effort の扱い=$mode (keep は今のまま、default は既定。作業役は常に今のまま) 理由=${reason:-なし}"
+  while IFS=$'\t' read -r pane role loc name state wname; do
+    echo "  $pane $role $loc $name $state $wname"
+    [ "$pane" = "$from" ] && continue
+    case "$role" in leader) leaders+=("$pane") ;; single) singles+=("$pane") ;; esac
+  done < <(panes_list)
+
+  for pane in "${leaders[@]}"; do leader_flow "$pane" "$from" "$mode" "$reason" & done
+  # 依頼したペインがリーダーなら、その作業役はここで再起動する
+  [ "$(t display -p -t "$from" '#{@agent_name}')" = leader ] && restart_workers "$from" &
+  for pane in "${singles[@]}"; do restart_pane "$pane" "$mode" & sleep 3; done
+  wait
+
+  echo "依頼したペインを再起動する $(date '+%F %T')"
+  TA_ALLOW_FOCUS="$from" restart_pane "$from" "$mode"
+  t set -p -t "$from" -u @restart
+  t set -gu @restart_log
+  echo "終了 $(date '+%F %T')"
+  # 依頼したペインの Claude に、結果をユーザーへ伝えさせる
+  TA_ALLOW_FOCUS="$from" wait_ready "$from" || return 0
+  t set -p -t "$from" @agent_state sent
+  t send-keys -t "$from" -l "[全体の再起動] 終わりました。結果は $log にあります。読んで、再起動したペインと、飛ばしたペインとその理由をユーザーに伝えてください"
+  sleep 1
+  t send-keys -t "$from" Enter
 }
 
 cmd="${1:-}"
@@ -97,8 +385,30 @@ case "$cmd" in
       awk -F'\t' '$2 != "" { printf "%-12s %-8s %s\n", $1, $2, $3 }'
     ;;
 
+  panes) panes_list ;;
+
+  claude)
+    c="$(claude_pid "${1:?pane_pid が要る}")" || exit 1
+    info="$(claude_info "$c")" || exit 1
+    printf '%s\t%s\n' "$c" "$info"
+    ;;
+
+  restart) restart_pane "${1:?ペインの ID が要る}" "${2:-keep}" ;;
+
+  restart-workers)
+    # 全体の再起動の途中なら、結果をその記録にも書く (リーダーの返答に頼らずに残すため)
+    log="$(t show -gqv @restart_log)"
+    if [ -n "$log" ]; then
+      restart_workers "${1:?リーダーのペインの ID が要る}" | sed -u "s/^/  (リーダー $1 から) /" | tee -a "$log"
+    else
+      restart_workers "${1:?リーダーのペインの ID が要る}"
+    fi
+    ;;
+
+  restart-all) restart_all "$@" ;;
+
   *)
-    sed -n '2,12p' "$0"
+    sed -n '2,15p' "$0"
     exit 2
     ;;
 esac
