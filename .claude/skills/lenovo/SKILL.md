@@ -52,13 +52,25 @@ lenovo は、ユーザーが今使っている Windows 11 の ThinkPad である
 
 ## lenovo-interactive が通らないとき
 
-内側の sshd (スケジュールタスク `LenovoInteractiveSshd`) は、黙って止まることがある。`Connection closed` で、`lenovo-interactive-run` は 255 で終わる。
+内側の sshd は、トレイのアプリ `lenovo-interactive-tray.exe` が画面を出さずに起動して見張る。アプリは、スケジュールタスク `LenovoInteractiveSshd` が起動する。
+
+- sshd が止まると、アプリが 5 秒後に起動し直す。続けてすぐに止まると、間を 10・20・40・80・160・300 秒と延ばす
+- アプリが終わると、sshd も終わる。タスクは起動し直さない
+- アプリの場所は `C:\Users\karinto\AppData\Local\lenovo-interactive-sshd\` である。同じフォルダの `tray.log` に、sshd の起動と終了 (終了コード、動いた秒数) が書かれる
+
+通らないとき (`Connection closed` で、`lenovo-interactive-run` が 255 で終わる) は、次の順に見る。
+
+1. タスクの状態を見る。`Ready` なら、アプリは終わっている。タスクを起動する
+2. タスクが動いていれば、`tray.log` を読み、sshd が止まった理由と、起動し直すのを待っているかを見る
 
 ```bash
+ssh lenovo 'Get-ScheduledTask -TaskName LenovoInteractiveSshd | Select-Object State'
 ssh lenovo 'Start-ScheduledTask -TaskName LenovoInteractiveSshd'
+ssh lenovo '[Console]::OutputEncoding = [Text.Encoding]::UTF8; Get-Content -Encoding UTF8 -Tail 20 C:/Users/karinto/AppData/Local/lenovo-interactive-sshd/tray.log'
 ```
 
-ユーザーがログオンしていない間は使えない。これは正常である。
+- 🔴 アプリのアイコンは、ユーザーの画面の通知領域にある。緑は sshd が動いている、黄は起動し直すのを待っている、赤は続けて 3 回以上すぐに止まったことを表す。Claude は、メニューの「終了する」を押さない。アプリを `Stop-Process` などで止めない
+- ユーザーがログオンしていない間は使えない。これは正常である
 
 ## 画面を撮る
 
