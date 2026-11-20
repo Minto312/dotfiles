@@ -10,7 +10,7 @@
 #   tmux-agents restart <pane> [keep|default|<段階>]
 #                                       Claude を、待機になるのを待ってから終了し、同じ会話を開き直す
 #   tmux-agents restart-workers <leader_pane>
-#                                       リーダーと同じウィンドウの作業役をすべて再起動する (effort は今のまま)
+#                                       リーダーと同じウィンドウの作業役を再起動する (effort は今のまま。作業中の作業役は外す)
 #   tmux-agents restart-all <from_pane> [keep|default] [理由]
 #                                       すべての Claude を再起動する。tmux の run-shell -b から動かす (下の説明)
 #
@@ -32,8 +32,11 @@
 #     リーダーを再起動する → 最後に依頼したペイン (from_pane) を再起動し、結果を伝える指示を送る。
 #     依頼したペインの Claude も終了させるので、その Claude の子プロセスではなく、tmux の run-shell -b で動かす。
 #     経過は ~/.local/state/tmux-agents/restart-<日時>.log に書く
-#   - 待つ時間の上限: 1 つのペインが待機になるまで TA_WAIT 秒 (既定 3600)、リーダーが作業役を再起動し終える
-#     まで TA_LEADER_WAIT 秒 (既定 7200)
+#   - restart-all と restart-workers は、その時点で再起動できないペイン (作業中、Bash ツールの処理が残っている、
+#     ユーザーが使っている) を待たずに外す。リーダーを外すと、その作業役も外れる。待つのは、連絡したあとの
+#     リーダーと依頼したペインだけ (どちらも、この処理が作業させているため)
+#   - 待つ時間の上限: restart と、連絡したあとのリーダー・依頼したペインが待機になるまで TA_WAIT 秒 (既定 3600)、
+#     リーダーが作業役を再起動し終えるまで TA_LEADER_WAIT 秒 (既定 7200)
 set -uo pipefail
 
 # 操作する tmux サーバー: 明示されたソケット > 自分がいるサーバー ($TMUX) > 既定のサーバー
@@ -154,27 +157,31 @@ ready() {
   return 0
 }
 
-# 再起動してよくなるまで待つ (2 回続けて確かめる)。TA_WAIT 秒で諦めて 1
+# 再起動してよくなるまで待つ (2 回続けて確かめる)。wait_ready <ペイン> [秒]。秒 (既定 TA_WAIT) で諦めて 1。
+# 秒が 0 なら待たずに 1 回だけ確かめる
 wait_ready() {
-  local end=$((SECONDS + ${TA_WAIT:-3600}))
-  while ((SECONDS < end)); do
+  local end=$((SECONDS + ${2:-${TA_WAIT:-3600}}))
+  while :; do
     if ready "$1"; then
       sleep 2
       ready "$1" && return 0
     fi
+    ((SECONDS < end)) || return 1
     sleep 5
   done
-  return 1
 }
 
-# 1 つのペインの Claude を再起動する。restart_pane <ペイン> <keep|default|段階>。結果を 1 行出力する
+# 1 つのペインの Claude を再起動する。restart_pane <ペイン> <keep|default|段階> [待つ秒]。結果を 1 行出力する。
+# 待つ秒が 0 なら、再起動できない状態のときは待たずに飛ばす
 restart_pane() {
-  local p="$1" mode="${2:-keep}" pid c id eff cwd direct=0 i cmd newc newid sh perm
+  local p="$1" mode="${2:-keep}" wait="${3:-${TA_WAIT:-3600}}" pid c id eff cwd direct=0 i cmd newc newid sh perm
   local -a cdir=()
   pid="$(t display -p -t "$p" '#{pane_pid}' 2>/dev/null)" || { say "$p: ペインが無い"; return 1; }
   claude_pid "$pid" >/dev/null || { say "$p: Claude が動いていない"; return 1; }
-  wait_ready "$p" || {
-    say "$p: 飛ばした。${TA_WAIT:-3600} 秒待っても再起動できる状態にならなかった (最後に見た理由: $why)"
+  wait_ready "$p" "$wait" || {
+    if [ "$wait" = 0 ]; then say "$p: 飛ばした。作業中か、使われていた ($why)"
+    else say "$p: 飛ばした。$wait 秒待っても再起動できる状態にならなかった (最後に見た理由: $why)"
+    fi
     return 1
   }
   # 待っている間に会話が変わることがある (/clear) ので、ここで引く
@@ -242,7 +249,8 @@ restart_pane() {
   say "$p: 再起動した (会話 $id、effort ${eff:-既定})"
 }
 
-# リーダーと同じウィンドウの作業役を、並べて再起動する。終わったらリーダーのペインの @restart を workers-done にする
+# リーダーと同じウィンドウの作業役を、並べて再起動する。作業中の作業役は待たずに外す。
+# 終わったらリーダーのペインの @restart を workers-done にする
 restart_workers() {
   local leader="$1" win p
   win="$(t display -p -t "$leader" '#{window_id}')" || { say "$leader: ペインが無い"; return 1; }
@@ -250,7 +258,7 @@ restart_workers() {
     while read -r p pid; do
       [ "$p" = "$leader" ] && continue
       claude_pid "$pid" >/dev/null || continue
-      restart_pane "$p" keep &
+      restart_pane "$p" keep 0 &
       sleep 3
     done
     wait
@@ -261,12 +269,12 @@ restart_workers() {
 # リーダーに、作業役の再起動を頼む
 notify_leader() {
   local l="$1" from="$2" reason="$3" buf="restart-${1#%}-$$"
-  wait_ready "$l" || { say "$l: リーダーが待機にならないので、連絡できなかった"; return 1; }
+  wait_ready "$l" 0 || { say "$l: 飛ばした。リーダーが作業中か、使われていた ($why)。作業役も再起動していない"; return 1; }
   t set -p -t "$l" @restart requested
   t load-buffer -b "$buf" - <<EOF
 [全体の再起動] ユーザーの依頼で、develop の Claude Code をすべて再起動します (理由: ${reason:-指定なし})。リーダーのあなた ($l) は、次のとおり進めてください。
 1. このウィンドウの作業役に、新しい作業を渡すのをやめる。作業役に指示を送っている途中なら、送り終えてよい
-2. Bash の run_in_background で \`$self_path restart-workers $l\` を動かす。作業役が待機になるのを待ってから、1 つずつ同じ会話を開き直す (effort は今のまま。ペインの ID と名前は変わらない)。ユーザーが使っている作業役や、確認の画面で止まっている作業役は、待っても待機にならなければ飛ばす
+2. Bash の run_in_background で \`$self_path restart-workers $l\` を動かす。待機の作業役を、1 つずつ同じ会話のまま開き直す (effort は今のまま。ペインの ID と名前は変わらない)。作業中の作業役 (Bash ツールの処理が残っている、確認の画面で止まっている、ユーザーが使っているものを含む) は、待たずに今回は外す
 3. 終わったら、返答に結果 (再起動した作業役と、飛ばした作業役とその理由) を 3 行以内で書いて止まる。結果は全体の再起動の記録にも書かれるので、別のファイルに残さなくてよい。あなたが止まると、$from から動いている処理が、あなたを同じ会話のまま再起動する
 EOF
   t set -p -t "$l" @agent_state sent
@@ -307,7 +315,7 @@ restart_all() {
   for pane in "${leaders[@]}"; do leader_flow "$pane" "$from" "$mode" "$reason" & done
   # 依頼したペインがリーダーなら、その作業役はここで再起動する
   [ "$(t display -p -t "$from" '#{@agent_name}')" = leader ] && restart_workers "$from" &
-  for pane in "${singles[@]}"; do restart_pane "$pane" "$mode" & sleep 3; done
+  for pane in "${singles[@]}"; do restart_pane "$pane" "$mode" 0 & sleep 3; done
   wait
 
   echo "依頼したペインを再起動する $(date '+%F %T')"
