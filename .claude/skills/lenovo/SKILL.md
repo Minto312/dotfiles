@@ -18,7 +18,8 @@ lenovo は、ユーザーが今使っている Windows 11 の ThinkPad である
 - **迷ったら `ssh lenovo`。** Session 1 が要るのは、表の 2 行目の場面だけである
 - 🔴 **`ssh lenovo-interactive "<コマンド>"` (端末なし) を直接使わない。** 実行のたびに利用者の画面にコンソールのウィンドウが開き、フォーカスを奪う (2026-11-15 にユーザーから苦情があった)。OpenSSH 9.5 for Windows が、pwsh に見えるコンソールを作るためである
 - `lenovo-interactive-run` は端末付きで接続するので、ウィンドウが出ない。出力 (標準出力と標準エラーをまとめたもの) をコマンドが終わってから返し、コマンドの終了コードで終わる。接続できなければ 255。1 回に 2 秒ほどかかる
-  - `lenovo-interactive-run - < script.ps1` で、標準入力のスクリプト (12 KB 程度まで) を実行する
+  - `lenovo-interactive-run - < script.ps1` で、標準入力のスクリプトを実行する
+  - 渡せるコマンドは 2,800 文字ほどまでである。標準入力のスクリプトも同じである。3,000 文字では接続ごと失敗し、255 で終わる (2026-11-15 に測定)。長いものは scp で lenovo に置いて読み込む
 - `ssh lenovo` の標準エラーには、毎回 `** WARNING: connection is not using a post-quantum key exchange algorithm.` などの 3 行が出る。無害なので、`grep -v -i -E 'post-quantum|store now|upgraded'` で落とす
 - 一時ファイルは `C:/Users/karinto/AppData/Local/Temp/` に置き、使い終わったら消す
 
