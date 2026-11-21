@@ -1,0 +1,19 @@
+[Unit]
+# ChatGPT デスクトップアプリ (chatgpt-app.service) を表示する仮想画面。
+#
+# 画面の番号は :90 にする。shared-browser は :99 から上 (最大 :118) を使うので重ならない。
+# TCP では待ち受けない。ローカルの接続 (unix ソケット) だけを受け付ける。
+# 画面を見るときは scripts/chatgpt-app/chatgpt-app-view で x11vnc を一時的に動かす。
+#
+# この unit は有効にしない。chatgpt-app.service の Requires= で一緒に起動する。
+# 背景と手順は machine/services/chatgpt-app.md
+Description=ChatGPT デスクトップアプリ用の仮想画面 (Xvfb :90)
+Documentation=file:///home/karinto/workspace/machine/services/chatgpt-app.md
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :90 -screen 0 1600x900x24 -nolisten tcp
+# X が接続を受け付けるまで待つ。これを待たないと、後に起動する openbox とアプリが接続に失敗する
+ExecStartPost=/bin/sh -c 'for i in $(seq 50); do DISPLAY=:90 /usr/bin/xdpyinfo >/dev/null 2>&1 && exit 0; sleep 0.2; done; echo "Xvfb :90 が 10 秒以内に応答しなかった" >&2; exit 1'
+Restart=always
+RestartSec=5

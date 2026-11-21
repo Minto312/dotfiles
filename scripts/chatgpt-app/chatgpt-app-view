@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# chatgpt-app-view — ChatGPT デスクトップアプリの仮想画面 (:90) を、lenovo のブラウザで見る
+#
+#   Xvfb :90 ← x11vnc (ホスト, 127.0.0.1:5990, 見るときだけ)
+#                 ▲
+#   websockify + noVNC (shared-browser のイメージ, 127.0.0.1:6090) ──lenovo-tunnel──> lenovo
+#
+# ふだんは x11vnc を動かさない。サインインのし直しや、Dots の許可の操作で
+# 画面を見る必要があるときだけ start し、見終わったら stop する。
+# noVNC は apt で入れない (Ubuntu の nodejs を引き込むため)。shared-browser の
+# コンテナのイメージにある websockify と noVNC を使う。
+#
+# 使い方:
+#   chatgpt-app-view start    x11vnc と noVNC を起動し、lenovo の既定ブラウザで開く
+#   chatgpt-app-view stop     トンネル・noVNC・x11vnc を止める
+#   chatgpt-app-view status   動いているかを表示する
+#
+# 背景は machine/services/chatgpt-app.md
+set -euo pipefail
+
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+SB_DOCKER=$HERE/../shared-browser/docker
+TUNNEL=$HERE/../lenovo-tunnel/lenovo-tunnel
+
+DISP=:90
+RFB_PORT=5990
+NOVNC_PORT=6090
+VNC_UNIT=chatgpt-app-x11vnc
+CONTAINER=chatgpt-app-novnc
+# 止め忘れたときに x11vnc を自動で止めるまでの時間
+VNC_MAX=4h
+RUN_DIR=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/chatgpt-app-view
+
+# shared-browser と同じ決め方のタグ (docker/ の内容のハッシュ)。
+# 同じ内容なら、shared-browser が建てたイメージをそのまま使う。
+IMAGE=shared-browser-x:$(cat "$SB_DOCKER/Dockerfile" "$SB_DOCKER/entrypoint.sh" | sha256sum | cut -c1-12)
+
+log() { printf '%s\n' "$*" >&2; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+# ⚠ systemd --user の unit も対話 shell も docker グループを持たないことがある。sg で補う
+#   (shared-browser と同じ)。sg の -c はログインシェルで解釈されるので bash に渡し直す
+docker_() {
+	local cmd
+	printf -v cmd '%q ' docker "$@"
+	sg docker -c "bash -c $(printf '%q' "$cmd")"
+}
+
+cmd_start() {
+	systemctl --user is-active --quiet chatgpt-app-xvfb.service \
+		|| die "chatgpt-app-xvfb.service が動いていない"
+
+	# パスワードは起動のたびに作り直す。ファイルは $XDG_RUNTIME_DIR (tmpfs) にだけ置く
+	mkdir -p "$RUN_DIR"
+	chmod 700 "$RUN_DIR"
+	local pw
+	pw=$(head -c 24 /dev/urandom | base64 | LC_ALL=C tr -dc 'a-zA-Z0-9')
+	pw=${pw:0:8}   # VNC の認証は先頭 8 文字だけを使う
+	x11vnc -storepasswd "$pw" "$RUN_DIR/passwd" >/dev/null 2>&1
+
+	systemctl --user stop "$VNC_UNIT" 2>/dev/null || true
+	# -localhost: 127.0.0.1 でだけ待ち受ける
+	systemd-run --user --quiet --collect --unit="$VNC_UNIT" -p RuntimeMaxSec="$VNC_MAX" \
+		/usr/bin/x11vnc -display "$DISP" -localhost -rfbport "$RFB_PORT" \
+		-rfbauth "$RUN_DIR/passwd" -forever -shared -quiet
+
+	if ! docker_ image inspect "$IMAGE" >/dev/null 2>&1; then
+		log "イメージ $IMAGE をビルドする"
+		docker_ build -q -t "$IMAGE" "$SB_DOCKER" >/dev/null
+	fi
+	docker_ rm -f "$CONTAINER" >/dev/null 2>&1 || true
+	# --network host: ホストの 127.0.0.1:5990 (x11vnc) に繋ぎ、127.0.0.1:6090 で待ち受ける
+	docker_ run -d --rm --name "$CONTAINER" --network host --entrypoint websockify "$IMAGE" \
+		--web /usr/share/novnc "127.0.0.1:$NOVNC_PORT" "127.0.0.1:$RFB_PORT" >/dev/null
+
+	local i
+	for i in $(seq 1 30); do
+		curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$NOVNC_PORT/vnc.html" && break
+		sleep 1
+	done
+	curl -fs -o /dev/null --max-time 2 "http://127.0.0.1:$NOVNC_PORT/vnc.html" \
+		|| die "noVNC (127.0.0.1:$NOVNC_PORT) が応答しない"
+
+	"$TUNNEL" open "$NOVNC_PORT" "/vnc.html?autoconnect=true&resize=scale&reconnect=true&password=$pw"
+	log "見終わったら: $0 stop ($VNC_MAX 後に x11vnc は自動で止まる)"
+}
+
+cmd_stop() {
+	"$TUNNEL" down "$NOVNC_PORT" || true
+	docker_ rm -f "$CONTAINER" >/dev/null 2>&1 || true
+	systemctl --user stop "$VNC_UNIT" 2>/dev/null || true
+	rm -rf "$RUN_DIR"
+	log "止めた"
+}
+
+cmd_status() {
+	printf 'x11vnc (%s): %s\n' "$VNC_UNIT" "$(systemctl --user is-active "$VNC_UNIT" 2>/dev/null || true)"
+	local st
+	st=$(docker_ inspect -f '{{.State.Status}}' "$CONTAINER" 2>/dev/null | tr -d '\n' || true)
+	printf 'noVNC (%s): %s\n' "$CONTAINER" "${st:-無し}"
+	local fwd
+	fwd=$("$TUNNEL" list 2>/dev/null | awk -v d=":$NOVNC_PORT" '$3 == d { print "lenovo localhost" $2 " → develop 127.0.0.1" $3 }')
+	printf 'トンネル: %s\n' "${fwd:-無し}"
+}
+
+case "${1:-}" in
+	start)  cmd_start ;;
+	stop)   cmd_stop ;;
+	status) cmd_status ;;
+	*) die "usage: chatgpt-app-view {start|stop|status}" ;;
+esac
