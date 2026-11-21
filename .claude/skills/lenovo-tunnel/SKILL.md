@@ -19,7 +19,7 @@ develop 127.0.0.1:<dport>  ──ssh -R──>  lenovo localhost:<lport>
 ```bash
 ~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel up 5173          # 同じ番号で通す
 ~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel up 3000:8080     # lenovo:3000 → develop:8080
-~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel open 5173 /docs  # 通して既定ブラウザで開く
+~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel open 5173 /docs  # 通して、利用者の画面の既定ブラウザで開く
 ~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel list             # 現在の一覧
 ~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel down 5173        # 個別に切る
 ~/dotfiles/scripts/lenovo-tunnel/lenovo-tunnel down --all       # 全部切る
@@ -57,5 +57,14 @@ develop 127.0.0.1:<dport>  ──ssh -R──>  lenovo localhost:<lport>
 - develop 側で誰も listen していないポートを指定すると `warn` が出る (指定ミスの検出)
 - lenovo の loopback にしか出ない (Windows sshd の `GatewayPorts` 既定 no)。LAN には露出しない
 - 接続先は `LT_CLIENT_HOST` で変えられる (既定 `lenovo`)
+- `open` は `lenovo-interactive-run` を使い、利用者の画面 (Session 1) にブラウザを開く。
+  `ssh lenovo` は Session 0 で動く。Session 0 で開いたブラウザは、利用者の画面に出ない
+  (2026-11-22 に、「開いた」と表示したのに画面に何も出なかった)
+- `open` は、次のときに「開けなかった」と表示して 1 で終わる
+  - `lenovo-interactive-run` が 0 以外で終わったとき (接続できないときなど)。通らないときの手順は `lenovo` スキルにある
+  - 15 秒待っても chrome.exe が終わらなかったとき。Chrome が起動していなかったので、chrome.exe 自身が
+    ブラウザになった見込みが高い。このブラウザは接続の終了とともに殺されるので、画面に出てもすぐに消える。
+    ユーザーに Chrome を起動してもらってから、やり直す
+- `open` は `LT_CLIENT_HOST=lenovo` のときだけ使える (`lenovo-interactive-run` の接続先が決まっているため)
 
 背景と実測は `~/workspace/machine/dev/lenovo-tunnel.md`。
