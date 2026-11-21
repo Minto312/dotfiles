@@ -11,7 +11,7 @@ After=chatgpt-app-xvfb.service
 
 [Service]
 Type=simple
-Environment=DISPLAY=:90
+Environment=DISPLAY=:90 XAUTHORITY=%t/chatgpt-app-x/Xauthority
 ExecStart=/usr/bin/openbox
 # Xvfb が落ちると openbox も終わる。Xvfb が戻った後に起動し直す
 Restart=always

@@ -3,6 +3,14 @@
 #
 # 画面の番号は :90 にする。shared-browser は :99 から上 (最大 :118) を使うので重ならない。
 # TCP では待ち受けない。ローカルの接続 (unix ソケット) だけを受け付ける。
+#
+# 接続には cookie (MIT-MAGIC-COOKIE-1) を要求する (-auth)。
+# /tmp/.X11-unix/X90 は誰でも書けるソケットで、/tmp/.X11-unix は shared-browser の
+# コンテナ (root で動く) にも渡っている。-auth が無いと、cookie 無しで誰でも :90 につながる。
+# cookie は起動のたびに作り、%t/chatgpt-app-x/Xauthority (0700 のディレクトリ) にだけ置く。
+# :90 につなぐものは XAUTHORITY にこのファイルを指定する。
+# ⚠ root のプロセス (root で動くコンテナを含む) はこのファイルを読めるので、root からは守れない。
+#
 # 画面を見るときは scripts/chatgpt-app/chatgpt-app-view で x11vnc を一時的に動かす。
 #
 # この unit は有効にしない。chatgpt-app.service の Requires= で一緒に起動する。
@@ -12,7 +20,11 @@ Documentation=file:///home/karinto/workspace/machine/services/chatgpt-app.md
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/Xvfb :90 -screen 0 1600x900x24 -nolisten tcp
+RuntimeDirectory=chatgpt-app-x
+RuntimeDirectoryMode=0700
+Environment=XAUTHORITY=%t/chatgpt-app-x/Xauthority
+ExecStartPre=/bin/sh -c 'umask 077; : >"$XAUTHORITY"; /usr/bin/xauth -q -f "$XAUTHORITY" add :90 MIT-MAGIC-COOKIE-1 "$(/usr/bin/mcookie)"'
+ExecStart=/usr/bin/Xvfb :90 -screen 0 1600x900x24 -nolisten tcp -auth %t/chatgpt-app-x/Xauthority
 # X が接続を受け付けるまで待つ。これを待たないと、後に起動する openbox とアプリが接続に失敗する
 ExecStartPost=/bin/sh -c 'for i in $(seq 50); do DISPLAY=:90 /usr/bin/xdpyinfo >/dev/null 2>&1 && exit 0; sleep 0.2; done; echo "Xvfb :90 が 10 秒以内に応答しなかった" >&2; exit 1'
 Restart=always

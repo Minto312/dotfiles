@@ -5,7 +5,7 @@
 #
 # --user-data-dir を付ける理由: ~/.config は public な ~/dotfiles/.config への
 # シンボリックリンクなので、サインインの情報をそこに書かせない。
-# (付けても、作業用のファイルは ~/.config/Codex/ に書かれる。.gitignore で除く件は PR #35)
+# (付けても、作業用のファイルは ~/.config/Codex/ に書かれる。.gitignore で除いている)
 #
 # 有効にするのはこの unit だけ (default.target)。Xvfb と openbox は依存で起動する。
 # 背景と手順は machine/services/chatgpt-app.md
@@ -17,21 +17,36 @@ After=chatgpt-app-xvfb.service chatgpt-app-openbox.service
 
 [Service]
 Type=simple
-Environment=DISPLAY=:90 LANG=ja_JP.UTF-8
+Environment=DISPLAY=:90 XAUTHORITY=%t/chatgpt-app-x/Xauthority LANG=ja_JP.UTF-8
+# 🔴 セッションの D-Bus に届かないようにする。
+# Chromium は、セッションの D-Bus 経由で systemd に頼み、本体と node のサービスを
+# 自分で作る scope (app-org.chromium.Chromium-<pid>.scope, app.slice の下) に移す。
+# 移ると、dot の命令を動かす codex の exec-server もそちらに入り、
+# この unit の MemoryMax・stop・restart が効かなくなる。
+# D-Bus に届かなければ scope は作られず、すべてのプロセスがこの unit の cgroup に残る。
+# develop のセッションの D-Bus には portal も鍵の保管 (Secret Service) も無いので、
+# アプリはもともと D-Bus のこれらの機能を使っていない。
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/chatgpt-app-no-session-bus
 ExecStart=/usr/bin/chatgpt --user-data-dir=%h/.local/state/chatgpt-app
-# 落ちたら (Xvfb が落ちてアプリが終わった場合を含む) 起動し直す
+# 念のため、止めた後に、このアプリが作った scope が残っていれば止める
+ExecStopPost=%h/dotfiles/scripts/chatgpt-app/chatgpt-app-stop-scopes %h/.local/state/chatgpt-app
+# 落ちたら (Xvfb が落ちてアプリが終わった場合と、下の MemoryMax による OOM を含む) 起動し直す
 Restart=always
 RestartSec=30
 TimeoutStopSec=30
 
 # OOM の対策。develop は過去に、OOM killer が user manager を選んで user の
 # サービスがすべて止まったことがある (machine/troubleshooting/oom-kills-user-manager.md)。
-# - MemoryMax=3G: 使う量は約 1 GB (最大 1.2 GB を観測) なので、その 2.5 倍を上限にする。
-#   超えたときは、この unit の中だけで OOM になり、ほかのプロセスは巻き込まない
+# - MemoryMax=6G: アプリ全体 (本体・renderer・codex の app-server と exec-server) は
+#   約 2.7〜2.9 GB を使う。その約 2 倍を上限にする。dot が exec-server で大きなビルドを
+#   動かしても、超えたときはこの unit の中だけで OOM になり、ほかのプロセスは巻き込まない。
+#   service の既定は OOMPolicy=stop なので、unit ごと止まり、Restart=always で起動し直す
 # - OOMScoreAdjust=800: 全体の OOM のとき、ほかの user のサービス (200)・
 #   user manager (100)・herdr と claude (0) より先に、このアプリが選ばれるようにする。
-#   値を上げるのは特権が要らない
-MemoryMax=3G
+#   値を上げるのに特権は要らない。
+#   ⚠ Chromium が子のプロセスの値を自分で付け直すので、800 になるのは一部だけ
+#   (本体と exec-server は 800、renderer は 300、node のサービスと codex の app-server は 200)
+MemoryMax=6G
 OOMScoreAdjust=800
 
 [Install]
