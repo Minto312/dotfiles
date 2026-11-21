@@ -48,6 +48,8 @@ zsh/env.zsh.backup
 .config/NuGet/
 .config/tailscale/
 .config/inkscape/
+# ChatGPT のデスクトップアプリ: --user-data-dir を付けても作業用のファイル (artifact-sessions/ など) をここに書く
+.config/Codex/
 # herdr: config.toml のみ管理し、ログ・ソケット・セッション状態は持たない
 .config/herdr/*.log
 .config/herdr/*.sock
