@@ -58,9 +58,13 @@ develop 127.0.0.1:<dport>  ──ssh -R──>  lenovo localhost:<lport>
 - lenovo の loopback にしか出ない (Windows sshd の `GatewayPorts` 既定 no)。LAN には露出しない
 - 接続先は `LT_CLIENT_HOST` で変えられる (既定 `lenovo`)
 - `open` は `lenovo-interactive-run` を使い、利用者の画面 (Session 1) にブラウザを開く。
-  `ssh lenovo` は Session 0 で動くので、そこで開いても利用者の画面には出ない (2026-11-22 に、
-  「開いた」と表示したのに画面に何も出なかった)。lenovo-interactive に接続できなければ、
-  「開けなかった」と表示して 1 で終わる。通らないときの手順は `lenovo` スキルにある
+  `ssh lenovo` は Session 0 で動く。Session 0 で開いたブラウザは、利用者の画面に出ない
+  (2026-11-22 に、「開いた」と表示したのに画面に何も出なかった)
+- `open` は、次のときに「開けなかった」と表示して 1 で終わる
+  - `lenovo-interactive-run` が 0 以外で終わったとき (接続できないときなど)。通らないときの手順は `lenovo` スキルにある
+  - 15 秒待っても chrome.exe が終わらなかったとき。Chrome が起動していなかったので、chrome.exe 自身が
+    ブラウザになった見込みが高い。このブラウザは接続の終了とともに殺されるので、画面に出てもすぐに消える。
+    ユーザーに Chrome を起動してもらってから、やり直す
 - `open` は `LT_CLIENT_HOST=lenovo` のときだけ使える (`lenovo-interactive-run` の接続先が決まっているため)
 
 背景と実測は `~/workspace/machine/dev/lenovo-tunnel.md`。

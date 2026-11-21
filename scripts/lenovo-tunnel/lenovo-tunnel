@@ -197,16 +197,21 @@ wait_closed() {
 
 # lenovo の既定ブラウザで、利用者の画面 (Session 1) に開く。トンネルが無ければ張る
 #
-# 🔴 ps_run (ssh lenovo) は Session 0 で動くので、そこで Start-Process しても利用者の画面に出ない。
-#    2026-11-22 に「開いた」と表示したのに、画面には何も出なかった。そこで lenovo-interactive-run
-#    (Session 1 で、ウィンドウを出さずに動かす) を使う。端末なしの `ssh lenovo-interactive` は、
-#    利用者の画面にコンソールのウィンドウを出してフォーカスを奪うので使わない
-# ⚠ lenovo の sshd は、接続が終わるとそこから起動したプロセスを殺す (50 ms ほどで殺された)。
-#    既定ブラウザ (2026-11-22 は Chrome) の chrome.exe が、起動中の Chrome に URL を渡して終わるまで待ってから
-#    pwsh を終える (lenovo-browser/lenovo-chrome-shim と同じ理由)。Chrome が起動していないときは chrome.exe 自身が
-#    ブラウザになって終わらないので、15 秒で待つのをやめる。その後、接続の終了とともに殺される
-# lenovo-interactive-run の接続先は lenovo-interactive に決まっているので、LT_CLIENT_HOST が
-# lenovo のときだけ使える
+# 🔴 ps_run (ssh lenovo) は Session 0 で動く。Session 0 で Start-Process しても、ブラウザは利用者の画面に出ない。
+#    2026-11-22 に、「開いた」と表示したのに画面には何も出なかった。
+#    このため、Session 1 でウィンドウを出さずに動かす lenovo-interactive-run を使う。
+#    端末なしの `ssh lenovo-interactive` は、利用者の画面にコンソールのウィンドウを出してフォーカスを奪うので使わない
+# ⚠ lenovo の sshd は、接続が終わるとそこから起動したプロセスを殺す。待たずに pwsh を終えると、
+#    50 ms 待ってから印のファイルを書く子プロセスは、書けなかった (2026-11-15 の実測。machine/dev/lenovo-browser.md)。
+#    このため、chrome.exe が終わるまで待ってから pwsh を終える (lenovo-browser/lenovo-chrome-shim と同じ理由)。
+#    既定ブラウザが Chrome であることは、2026-11-22 に確かめた。chrome.exe は、起動中の Chrome に URL を渡すと終わる
+# ⚠ Chrome が起動していないときは、chrome.exe 自身がブラウザになって終わらない。
+#    ssh から起動した Chrome は、接続の終了とともに殺される (2026-09-15 の実測。lenovo-browser/lenovo-browser の冒頭)。
+#    このときブラウザは画面に出てもすぐに消えるので、15 秒待っても終わらなければ、開けなかったとして扱う。
+#    この場合を利用者の画面で試してはいない
+# ⚠ -PassThru がプロセスを返せないときに、pwsh 7 が null を返すか、エラーを出すかは確かめていない。
+#    エラーを出すなら、$ErrorActionPreference = 'Stop' によって 1 で終わり、開けなかったとして扱う
+# lenovo-interactive-run の接続先は lenovo-interactive に決まっているので、LT_CLIENT_HOST が lenovo のときだけ使える
 cmd_open() {
 	[ $# -gt 0 ] || die "usage: lenovo-tunnel open <port>[:<develop側port>] [path]"
 	[ "$CLIENT_HOST" = lenovo ] || die "open は LT_CLIENT_HOST=lenovo のときだけ使える (今は $CLIENT_HOST)"
@@ -224,13 +229,20 @@ cmd_open() {
 	# PowerShell の単一引用符の中では、' を '' と書く
 	local ps="\$ErrorActionPreference = 'Stop'
 \$p = Start-Process -FilePath '${url//\'/\'\'}' -PassThru
-if (\$p) { [void]\$p.WaitForExit(15000) }"
+if (\$p -and -not \$p.WaitForExit(15000)) { exit 3 }"
 	local out rc=0
 	out=$(timeout 40 "$LIR" "$ps" 2>&1) || rc=$?
-	if [ "$rc" -ne 0 ]; then
-		[ -n "$out" ] && log "$out"
-		die "$CLIENT_HOST でブラウザを開けなかった (lenovo-interactive-run rc=$rc。255 は接続できなかったことを表す)"
-	fi
+	case $rc in
+		0) ;;
+		3)
+			log "15 秒待っても、既定ブラウザのプロセスが終わらなかった。"
+			log "Chrome が起動していなかったので、そのプロセスがブラウザになり、接続の終了とともに殺された見込みが高い。"
+			log "ユーザーに Chrome を起動してもらってから、やり直す。"
+			die "$CLIENT_HOST でブラウザを開けなかった" ;;
+		*)
+			[ -n "$out" ] && log "$out"
+			die "$CLIENT_HOST でブラウザを開けなかった (lenovo-interactive-run rc=$rc。255 は接続の失敗など、124 は 40 秒の時間切れ)" ;;
+	esac
 	log "$CLIENT_HOST の既定ブラウザで、利用者の画面に開いた: $url"
 }
 
