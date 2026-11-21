@@ -51,7 +51,7 @@ develop は SSH 先なので、`gws auth login` が待つ `http://localhost:<por
 
 1. `BROWSER=true gws-jings auth login --scopes <カンマ区切り>` を裏で起動し、出力から URL と port を拾う（スコープは `gws-jings auth status` の `scopes` に揃える）
 2. `lenovo-tunnel up <port>` で callback を通す。**port は振り替わると redirect_uri と食い違って失敗する**ので、`ok` 行が同じ番号か確認
-3. URL に `&login_hint=<メール>` を足して、ユーザーに手元のブラウザで開いてもらう。🔴 SSH 越しの `Start-Process` は手元の画面に出ない（`lenovo-tunnel open` も同じ）。長い URL をそのまま渡すか、develop に 302 で飛ばすだけの小さなサーバを立ててそのポートも `lenovo-tunnel up` し、`http://localhost:<そのポート>` を開いてもらう
+3. URL に `&login_hint=<メール>` を足して、ユーザーに手元のブラウザで開いてもらう。🔴 `ssh lenovo` から `Start-Process` しても、Session 0 で動くので手元の画面に出ない（`lenovo-tunnel open` は `lenovo-interactive-run` で Session 1 に開く）。長い URL をそのまま渡すか、develop に 302 で飛ばすだけの小さなサーバを立ててそのポートも `lenovo-tunnel up` し、`http://localhost:<そのポート>` を開いてもらう
 4. 終わったら `lenovo-tunnel down <port>`
 
 ## サービスと代表操作
