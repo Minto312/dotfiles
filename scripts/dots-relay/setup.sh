@@ -33,6 +33,6 @@ ln -sfn "tunnel-client-$TC_VERSION" "$LIB/tunnel-client"
 echo "tunnel-client: $("$LIB/tunnel-client/tunnel-client" --version)"
 
 if [ ! -f "$STATE/tunnel.env" ]; then
-  echo "まだ $STATE/tunnel.env がない。Platform で Tunnel と実行用の API キー (Tunnels の Read と Use) を作り、次で保存する:"
-  echo "  read -rp 'tunnel_id: ' T && read -rsp 'runtime API key: ' K && echo && (umask 077 && printf 'CONTROL_PLANE_TUNNEL_ID=%s\nCONTROL_PLANE_API_KEY=%s\n' \"\$T\" \"\$K\" > $STATE/tunnel.env) && unset K"
+  echo "まだ $STATE/tunnel.env がない。Platform で Tunnel と実行用の API キー (Tunnels の Read と Use) を作り、zsh で次を動かして保存する (bash では read -rp 'tunnel_id: ' T の形にする):"
+  echo "  read -r 'T?tunnel_id: ' && read -rs 'K?runtime API key: ' && echo && (umask 077 && printf 'CONTROL_PLANE_TUNNEL_ID=%s\nCONTROL_PLANE_API_KEY=%s\n' \"\$T\" \"\$K\" > $STATE/tunnel.env) && unset K T"
 fi
