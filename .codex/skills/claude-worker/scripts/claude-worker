@@ -1,0 +1,331 @@
+#!/usr/bin/env bash
+# claude-worker: develop の tmux のウィンドウで Claude Code を起動し、作業を渡す。
+# 指示文 (brief.md) と結果 (report.md) は、作業ごとの状態のディレクトリで受け渡す。
+# Codex (dot) の 1 回のコマンドに時間の上限があっても使えるように、操作を分けてある。
+#
+#   claude-worker start --dir <作業ディレクトリ> --name <作業の名前> [--effort <段階>] [--brief-file <ファイル>]
+#       指示文はファイルか標準入力で渡す。新しいウィンドウ main:dot/<作業の名前> を -d で作り、Claude を起動して
+#       指示を渡す。作業の ID などを key: value の行で出力する
+#   claude-worker status <ID>     状態を出力する (starting・working・blocked・done・needs-user・failed・idle・exited・gone)
+#   claude-worker result <ID>     report.md を出力する
+#   claude-worker finish <ID> [--force]
+#       Claude を /exit で終わらせ、ウィンドウを閉じ、状態のディレクトリを消す。
+#       blocked・needs-user・作業中のときは、--force がなければ何もしない (ウィンドウを残す)
+#   claude-worker list            作業の一覧
+#
+# 終了コード: 0 成功、1 誤り、2 使い方の誤り、3 状態のため断った (上限、ユーザーの判断待ち、作業中など)、
+#             4 tmux のサーバーか main のセッションに届かない
+#
+# 環境変数: CLAUDE_WORKER_MAX (同時に動かす数の上限、既定 2)、CLAUDE_WORKER_MEMORY_MAX (1 つの作業の
+#           メモリの上限、既定 8G)、CLAUDE_WORKER_MIN_AVAILABLE_MIB (起動に要る MemAvailable、既定 3072)
+set -uo pipefail
+
+state_root="${XDG_STATE_HOME:-$HOME/.local/state}/claude-worker"
+session=main
+max_tasks="${CLAUDE_WORKER_MAX:-2}"
+memory_max="${CLAUDE_WORKER_MEMORY_MAX:-8G}"
+min_avail_mib="${CLAUDE_WORKER_MIN_AVAILABLE_MIB:-3072}"
+
+die() { echo "error: $*" >&2; exit "${2:-1}"; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+# tmux のサーバーと main のセッションに届くかを確かめる。届かなければ理由を出して 4 で終わる
+need_tmux() {
+  local out
+  if ! out="$(tmux has-session -t "=$session" 2>&1)"; then
+    case "$out" in
+      *"Operation not permitted"*)
+        die "tmux のソケットにつなげない (Operation not permitted)。Codex の sandbox の中で動いている。sandbox の外で動かす承認が要る" 4 ;;
+      *"no server running"*|*"error connecting"*)
+        die "tmux のサーバーが動いていない ($out)。作らずに止める" 4 ;;
+      *"can't find session"*)
+        die "tmux のセッション $session が無い。作らずに止める" 4 ;;
+      *) die "tmux に届かない: $out" 4 ;;
+    esac
+  fi
+}
+
+# 作業の ID の形を確かめる (パスに使うため)
+check_id() { [[ "${1:-}" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$ ]] || die "作業の ID の形が違う: ${1:-}" 2; }
+
+# meta から値を読む
+meta() { sed -n "s/^$2=//p" "$state_root/$1/meta" 2>/dev/null | head -1; }
+
+# 記録したペインが、まだこの作業のものかを確かめる (ペインの ID は tmux のサーバーを起動し直すと振り直されるため、
+# ペインに付けた @claude_worker_id と照らす)。この作業のペインなら 0
+pane_is_ours() {
+  local id="$1" pane
+  pane="$(meta "$id" pane)"
+  [ -n "$pane" ] || return 1
+  [ "$(tmux display -p -t "$pane" '#{@claude_worker_id}' 2>/dev/null)" = "$id" ]
+}
+
+# ペインの中で Claude が動いていれば、その pid を出力する
+claude_pid_in() {
+  local ppid c
+  ppid="$(tmux display -p -t "$1" '#{pane_pid}' 2>/dev/null)" || return 1
+  for c in $(pgrep -P "$ppid") $(pgrep -P "$ppid" | xargs -r -n1 pgrep -P); do
+    [ "$(cat "/proc/$c/comm" 2>/dev/null)" = claude ] && { echo "$c"; return 0; }
+  done
+  return 1
+}
+
+# report.md の 1 行目の STATUS を出力する (無ければ空)
+report_status() {
+  local f="$state_root/$1/report.md"
+  [ -s "$f" ] || return 0
+  sed -n '1s/^STATUS:[[:space:]]*\([a-z-]*\).*/\1/p' "$f"
+}
+
+# 状態を出力する (1 語)
+task_state() {
+  local id="$1" pane st rs screen
+  pane_is_ours "$id" || { echo gone; return; }
+  pane="$(meta "$id" pane)"
+  claude_pid_in "$pane" >/dev/null || { echo exited; return; }
+  st="$(tmux display -p -t "$pane" '#{@agent_state}')"
+  screen="$(tmux capture-pane -p -t "$pane" -S -15 2>/dev/null)"
+  if [ "$st" = blocked ] || grep -qE 'Do you want to|Esc to cancel|Enter to select' <<<"$screen"; then
+    echo blocked; return
+  fi
+  # 指示を起動のコマンドの引数で渡すと、最初の指示を処理している間も @agent_state が idle のままのことがある
+  # (2026-11-22 に確かめた。最初のツールの実行で working になる)。作業中は画面の下の行に「esc to interrupt」が
+  # 出るので、それで補う
+  if grep -q 'esc to interrupt' <<<"$(tail -n 5 <<<"$screen")"; then
+    echo working; return
+  fi
+  case "$st" in
+    idle|done)
+      rs="$(report_status "$id")"
+      case "$rs" in
+        done|needs-user|failed) echo "$rs" ;;
+        *)
+          # 起動の直後 (指示を読み始める前) も idle になる。起動から 90 秒までは starting とみなす
+          if [ $(( $(date +%s) - $(date -d "$(meta "$id" created)" +%s 2>/dev/null || echo 0) )) -lt 90 ]; then
+            echo starting
+          else
+            echo idle   # 止まったが、report.md を書いていない
+          fi ;;
+      esac ;;
+    *) echo "${st:-starting}" ;;   # starting・sent・working
+  esac
+}
+
+# 生きている作業 (ペインがある作業) の ID を出力する
+live_tasks() {
+  local d id
+  for d in "$state_root"/*/; do
+    [ -d "$d" ] || continue
+    id="$(basename "$d")"
+    [[ "$id" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$ ]] || continue
+    pane_is_ours "$id" && echo "$id"
+  done
+}
+
+cmd_start() {
+  local dir="" name="" effort=high brief_file=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dir) dir="${2:-}"; shift 2 ;;
+      --name) name="${2:-}"; shift 2 ;;
+      --effort) effort="${2:-}"; shift 2 ;;
+      --brief-file) brief_file="${2:-}"; shift 2 ;;
+      *) usage ;;
+    esac
+  done
+  [ -n "$dir" ] && [ -n "$name" ] || usage
+  dir="$(cd "$dir" 2>/dev/null && pwd)" || die "作業ディレクトリが無い: $dir" 2
+  case "$effort" in medium|high|xhigh|max) ;; *) die "effort は medium・high・xhigh・max のどれか (low は使わない): $effort" 2 ;; esac
+  # ウィンドウの名前に、tmux の対象の指定で区切りに使う : と . を入れない
+  name="$(tr ':.\n\t' '----' <<<"$name" | sed 's/-*$//')"
+  [ -n "$name" ] || die "作業の名前が空" 2
+
+  local brief
+  if [ -n "$brief_file" ]; then brief="$(cat -- "$brief_file")" || die "指示文のファイルを読めない: $brief_file" 2
+  elif [ ! -t 0 ]; then brief="$(cat)"
+  else die "指示文を --brief-file か標準入力で渡す" 2
+  fi
+  [ -n "${brief//[[:space:]]/}" ] || die "指示文が空" 2
+
+  need_tmux
+  mkdir -p "$state_root" && chmod 700 "$state_root" || die "状態のディレクトリを作れない: $state_root"
+
+  # 同時に動かす数とメモリを確かめ、ウィンドウを作るまでを、ほかの start と重ならないようにする
+  exec 9>"$state_root/.lock"
+  flock -w 30 9 || die "ほかの start が終わらない" 3
+
+  local live n avail_kib
+  live="$(live_tasks)"
+  n="$(grep -c . <<<"$live")"
+  if [ "$n" -ge "$max_tasks" ]; then
+    [ -n "$live" ] && { echo "running:" >&2; sed 's/^/  /' <<<"$live" >&2; }
+    die "動いている作業が上限 ($max_tasks) に達している。終わった作業を finish してから起動する" 3
+  fi
+  avail_kib="$(awk '/^MemAvailable:/{print $2}' /proc/meminfo)"
+  if [ "$((avail_kib / 1024))" -lt "$min_avail_mib" ]; then
+    die "使えるメモリが少ない (MemAvailable $((avail_kib / 1024)) MiB < ${min_avail_mib} MiB)。起動しない" 3
+  fi
+
+  local id dirp
+  id="$(date +%Y%m%d-%H%M%S)-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
+  dirp="$state_root/$id"
+  mkdir -m 700 "$dirp" || die "作業のディレクトリを作れない: $dirp"
+
+  cat >"$dirp/brief.md" <<EOF
+# 作業の指示 (claude-worker)
+
+この Claude は、ユーザーが dot (OpenAI の Codex) に頼んだ作業を引き受けるために、claude-worker が tmux のウィンドウ \`$session:dot/$name\` で起動した。ユーザーはこのウィンドウを見ていないことが多い。
+
+## 結果の書き方
+
+- 作業を終えたら、結果を \`$dirp/report.md\` に書いてから止まる。dot はこのファイルを読んでユーザーに返す
+- report.md の 1 行目は、次のどれか 1 つにする。2 行目からは、結果を日本語で簡潔に書く (何をしたか、分かったこと、変えたファイル、残したこと)
+  - \`STATUS: done\` — 作業を終えた
+  - \`STATUS: needs-user\` — ユーザーの判断が要る。何を決めてほしいかと選択肢を書く。ユーザーがこのウィンドウで答えたら作業を続け、report.md を書き直す
+  - \`STATUS: failed\` — 作業を終えられなかった。理由を書く
+- ユーザーの判断が要るときは、AskUserQuestion の画面で待たずに、STATUS: needs-user の report.md を書いて止まる
+
+## 守ること
+
+- 下の依頼の範囲だけを行う。ほかの tmux のペインには何も送らない
+- push・PR・マージ・外部への送信 (メール、チャット、公開) は、依頼に書かれているときだけ行う
+
+## 依頼
+
+$brief
+EOF
+
+  local wname="dot/$name" out pane win
+  # ペインのシェルを、メモリの上限を付けた scope の中で起動する (Claude とその子がすべて入る)。
+  # 起動したあとに自分で claude を打つので、zsh の別名 (ユーザーが普段使うオプション) が効く
+  out="$(tmux new-window -d -t "=$session:" -n "$wname" -c "$dir" -P -F '#{pane_id} #{window_id}' \
+    "systemd-run --user --scope --quiet -p MemoryMax=$memory_max -- /usr/bin/zsh -i")" \
+    || { rm -rf "$dirp"; die "ウィンドウを作れない: $out"; }
+  read -r pane win <<<"$out"
+  tmux set -p -t "$pane" @claude_worker_id "$id"
+  tmux set -p -t "$pane" @agent_name "dot-$id"
+  tmux set -p -t "$pane" @agent_state starting
+  printf 'id=%s\npane=%s\nwindow=%s\nwindow_name=%s\ndir=%s\neffort=%s\ncreated=%s\n' \
+    "$id" "$pane" "$win" "$wname" "$dir" "$effort" "$(date -Iseconds)" >"$dirp/meta"
+  flock -u 9
+
+  # シェルが入力を受け付けるまで待つ
+  local i
+  for i in $(seq 30); do
+    [ "$(tmux display -p -t "$pane" '#{pane_current_command}' 2>/dev/null)" = zsh ] && break
+    sleep 0.5
+  done
+  sleep 1
+  tmux send-keys -t "$pane" -l "claude --effort $effort '$dirp/brief.md を読み、その指示に従ってください。'"
+  tmux send-keys -t "$pane" Enter
+
+  # Claude が起動したことを確かめる
+  local cpid=""
+  for i in $(seq 30); do cpid="$(claude_pid_in "$pane")" && break; sleep 1; done
+  echo "id: $id"
+  echo "window: $wname ($win)"
+  echo "pane: $pane"
+  echo "dir: $dir"
+  echo "effort: $effort"
+  echo "memory_max: $memory_max"
+  echo "brief: $dirp/brief.md"
+  echo "report: $dirp/report.md"
+  if [ -n "$cpid" ]; then
+    echo "claude_args: $(tr '\0' ' ' <"/proc/$cpid/cmdline" | sed 's/ $//')"
+  else
+    echo "warning: 30 秒たっても Claude のプロセスが見えない。status で確かめる" >&2
+  fi
+}
+
+cmd_status() {
+  local id="${1:-}"; check_id "$id"
+  [ -d "$state_root/$id" ] || die "作業が無い: $id"
+  need_tmux
+  local st pane
+  st="$(task_state "$id")"
+  pane="$(meta "$id" pane)"
+  echo "id: $id"
+  echo "state: $st"
+  echo "window: $(meta "$id" window_name) ($(meta "$id" window))"
+  echo "pane: $pane"
+  echo "effort: $(meta "$id" effort)"
+  [ -s "$state_root/$id/report.md" ] && echo "report: $state_root/$id/report.md" || echo "report: (まだ無い)"
+  case "$st" in
+    blocked|idle|exited)
+      # ユーザーかエージェントが判断できるように、画面を出す
+      echo "screen: |"
+      tmux capture-pane -p -J -t "$pane" -S -40 | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}' | sed 's/^/  /' ;;
+  esac
+}
+
+cmd_result() {
+  local id="${1:-}"; check_id "$id"
+  local f="$state_root/$id/report.md"
+  [ -s "$f" ] || die "report.md がまだ無い: $f" 3
+  cat "$f"
+  : >"$state_root/$id/.read"
+}
+
+cmd_finish() {
+  local id="${1:-}" force="${2:-}"; check_id "$id"
+  [ -z "$force" ] || [ "$force" = --force ] || usage
+  local dirp="$state_root/$id"
+  [ -d "$dirp" ] || die "作業が無い: $id"
+  need_tmux
+  local st pane win
+  st="$(task_state "$id")"
+  pane="$(meta "$id" pane)"
+  win="$(meta "$id" window)"
+  if [ -z "$force" ]; then
+    case "$st" in
+      blocked|needs-user)
+        die "Claude がユーザーの判断を待っている ($st)。ウィンドウ $(meta "$id" window_name) を残す" 3 ;;
+      starting|sent|working)
+        die "Claude が作業中 ($st)。終わってから finish する (止めるなら --force)" 3 ;;
+    esac
+  fi
+  # 未読の結果は、消す前に出す
+  if [ -s "$dirp/report.md" ] && [ ! -e "$dirp/.read" ]; then
+    echo "--- report.md (未読だったので出力する) ---"; cat "$dirp/report.md"; echo "---"
+  fi
+  if [ "$st" != gone ] && pane_is_ours "$id"; then
+    if claude_pid_in "$pane" >/dev/null; then
+      [ "$st" = working ] || [ "$st" = blocked ] && { tmux send-keys -t "$pane" Escape; sleep 1; }
+      tmux send-keys -t "$pane" -l "/exit"
+      tmux send-keys -t "$pane" Enter
+      local i
+      for i in $(seq 20); do claude_pid_in "$pane" >/dev/null || break; sleep 1; done
+      claude_pid_in "$pane" >/dev/null && echo "warning: 20 秒で Claude が終わらなかったので、ウィンドウごと閉じる" >&2
+    fi
+    pane_is_ours "$id" && tmux kill-window -t "$win"
+  fi
+  rm -rf -- "$dirp"
+  if tmux display -p -t "$win" '#{window_id}' >/dev/null 2>&1 && [ "$(tmux display -p -t "$win" '#{@claude_worker_id}' 2>/dev/null)" = "$id" ]; then
+    echo "warning: ウィンドウ $win が残っている" >&2
+  fi
+  echo "finished: $id (ウィンドウを閉じ、状態のディレクトリを消した)"
+}
+
+cmd_list() {
+  need_tmux
+  local d id n=0
+  for d in "$state_root"/*/; do
+    [ -d "$d" ] || continue
+    id="$(basename "$d")"
+    [[ "$id" =~ ^[0-9]{8}-[0-9]{6}-[0-9a-f]{6}$ ]] || continue
+    printf '%s  %-10s  %s\n' "$id" "$(task_state "$id")" "$(meta "$id" window_name)"
+    n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] || echo "(作業は無い)"
+  echo "limit: $max_tasks"
+}
+
+sub="${1:-}"; shift || true
+case "$sub" in
+  start) cmd_start "$@" ;;
+  status) cmd_status "$@" ;;
+  result) cmd_result "$@" ;;
+  finish) cmd_finish "$@" ;;
+  list) cmd_list "$@" ;;
+  *) usage ;;
+esac
