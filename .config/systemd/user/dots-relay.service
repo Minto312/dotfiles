@@ -1,0 +1,22 @@
+[Unit]
+# Dots (OpenAI の常駐エージェント) から、各リーダー (tmux の leader ペインの Claude) へ
+# 高島さんの依頼を中継する MCP サーバー。127.0.0.1:8781 でだけ待ち受ける。
+# 外からの入口は dots-relay-tunnel.service (OpenAI の Secure MCP Tunnel) だけ。
+# 準備は ~/dotfiles/scripts/dots-relay/setup.sh、背景と手順は machine/services/dots-relay.md
+Description=dots-relay: Dots から各リーダーへ依頼を中継する MCP サーバー (127.0.0.1:8781)
+Documentation=file://%h/workspace/machine/services/dots-relay.md
+
+[Service]
+Type=simple
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=DOTS_RELAY_STATE=%h/.local/state/dots-relay
+Environment=DOTS_RELAY_PORT=8781
+Environment=DOTS_RELAY_INBOX=%h/workspace/raim/tmp/inbox/unread
+ExecStart=%h/.local/lib/dots-relay/venv/bin/python %h/dotfiles/scripts/dots-relay/relay.py
+Restart=on-failure
+RestartSec=10
+MemoryMax=512M
+SyslogIdentifier=dots-relay
+
+[Install]
+WantedBy=default.target
