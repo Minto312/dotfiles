@@ -26,6 +26,7 @@ from typing import Annotated
 from pydantic import Field
 
 import dots_bridge.app as dba
+import dots_bridge.mcp as dbm
 from dots_bridge import DotsBridge, ReceivedMessage, Settings
 from dots_bridge.config import write_config
 from dots_bridge.errors import BridgeError
@@ -360,6 +361,12 @@ def build_app():
         log.info("from dots: kind=%s request=%s %r", message.kind, message.request_id, message.text[:200])
         if message.kind == "push":
             inbox_put(message)
+
+    # dots-bridge は自分のツールに OAuth が必要 (securitySchemes: oauth2) と書く。
+    # ChatGPT は「認証なし」で登録したプラグインにこの宣言があると、登録を拒む
+    # (「アプリ設定の一部が受け付けられませんでした」、2026-11-23 に確かめた)。
+    # 認証は Secure MCP Tunnel と KeyGuard で行うので、認証なし (noauth) と書き直す。
+    dbm._security_meta = lambda scope: {"securitySchemes": [{"type": "noauth"}]}
 
     def create_mcp(bridge_, auth_):
         mcp = _create_mcp(bridge_, None)  # 認証は Secure MCP Tunnel と KeyGuard で行う
