@@ -1,0 +1,35 @@
+[Unit]
+# OpenAI の Secure MCP Tunnel で、dots-relay を ChatGPT (Dots) につなぐ。
+# 外向きの HTTPS (api.openai.com:443) だけを使い、受け口のポートは開けない。
+# Tunnel の ID と実行用の API キー (Tunnels の Read と Use だけ) は
+# ~/.local/state/dots-relay/tunnel.env (0600) に置く。
+# dots-relay への要求には、共有の鍵を X-Dots-Relay-Key で付ける (dots-relay はこれが無い /mcp を拒む)。
+# --harpoon.target は、何も無い宛先 (127.0.0.1:1) を 1 つ登録するだけのもの。
+# ChatGPT はプラグインの登録のときに harpoon (OAuth の確認用の経路) に問い合わせることがあり、
+# 宛先が 1 つも無いと tunnel-client がその経路を拒む (unsupported channel)。
+# dots-relay は OAuth を使わないので、この宛先に要求が送られても何も起きない。
+Description=dots-relay-tunnel: Secure MCP Tunnel で dots-relay を Dots につなぐ
+Documentation=file://%h/workspace/machine/services/dots-relay.md
+Requires=dots-relay.service
+After=dots-relay.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.local/state/dots-relay/tunnel.env
+ExecStart=%h/.local/lib/dots-relay/tunnel-client/tunnel-client run \
+  --control-plane.api-key env:CONTROL_PLANE_API_KEY \
+  --mcp.server-url url=http://127.0.0.1:8781/mcp \
+  --mcp.extra-headers "X-Dots-Relay-Key: file:%h/.local/state/dots-relay/relay.key" \
+  --mcp.discovery-extra-headers "X-Dots-Relay-Key: file:%h/.local/state/dots-relay/relay.key" \
+  --mcp.oauth-discovery disabled \
+  --harpoon.target "label=none,url=https://127.0.0.1:1,desc=No-op target. dots-relay uses no OAuth" \
+  --health.listen-addr 127.0.0.1:8782 \
+  --log.format json
+Restart=always
+RestartSec=30
+MemoryMax=256M
+SyslogIdentifier=dots-relay-tunnel
+
+[Install]
+WantedBy=default.target
