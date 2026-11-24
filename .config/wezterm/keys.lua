@@ -14,12 +14,15 @@ return {
       end
     end),
   },
-  -- テキストのペーストは Ctrl+Shift+V (Linux 端末の慣例に合わせた)。
-  -- 🔴 Ctrl+V は wezterm 側で握らないこと。herdr --remote の
-  --    keys.remote_image_paste (既定 "ctrl+v") が生の Ctrl+V を受け取って、
-  --    手元のクリップボード画像を develop 側の一時ファイルに渡し、
-  --    そのパスをペインに入力する。wezterm が Ctrl+V を横取りすると
-  --    herdr まで届かず、画像ペーストが無言で効かなくなる。
+  -- テキストのペーストは Ctrl+V と Ctrl+Shift+V。
+  -- Ctrl+V をそのまま送ると、Claude Code はクリップボードの画像を探しに行く
+  -- (tmux 経由では手元の画像は見えない)。利用者の希望で、通常の貼り付けにした (2026-11-24)。
+  -- ⚠ これで herdr --remote の画像の貼り付け (keys.remote_image_paste、既定 "ctrl+v") は効かなくなる。
+  {
+    key = 'v',
+    mods = 'CTRL',
+    action = wezterm.action.PasteFrom('Clipboard'),
+  },
   {
     key = 'v',
     mods = 'CTRL|SHIFT',
