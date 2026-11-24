@@ -19,6 +19,13 @@
 #
 # (以前は zellij タブ名も書き換えていたが、hook 発火時の active タブが claude の
 #  タブとは限らず、無関係なタブをリネームしてしまうため撤去した)
+#
+# 巡回の回 (orchestrate スキル。リーダーが CronCreate で受ける「[巡回]」で始まるプロンプト):
+# prompt で開始時刻のファイルに patrol の印を付け、stop では、リーダーがユーザーに伝えることを
+# 見つけた (tmux のペインの @patrol_report がある) ときだけ、かかった秒数によらず push させる。
+# 見つけなかった回は、wezterm の通知も push も、その後に来る idle_prompt の通知もしない。
+# @patrol_report は tmux-agents が次の UserPromptSubmit で消す (Stop のフックは並んで動くので、
+# Stop では消さない)
 
 set -uo pipefail
 
@@ -53,7 +60,11 @@ case "$event" in
     sid=$(jqr '.session_id')
     [[ -n "$sid" ]] || exit 0
     mkdir -p "$STATE_DIR" 2>/dev/null || exit 0
-    printf '%s %s\n' "$(date +%s)" "$(jqr '.prompt_id')" \
+    # 3 欄目は回の種類 (巡回なら patrol)。prompt_id が無いときは - を入れ、欄がずれないようにする
+    kind=""
+    [[ "$(jqr '.prompt')" == "[巡回]"* ]] && kind=patrol
+    pid_=$(jqr '.prompt_id')
+    printf '%s %s %s\n' "$(date +%s)" "${pid_:--}" "$kind" \
       >"$STATE_DIR/$(sanitize "$sid").start" 2>/dev/null || true
     # 放置された state を掃除
     find "$STATE_DIR" -type f -mtime +2 -delete 2>/dev/null || true
@@ -67,6 +78,22 @@ case "$event" in
     if [[ -n "$tp" ]]; then
       project=$(basename "$(dirname "$tp")")
     fi
+
+    sid=$(jqr '.session_id')
+    key=$(sanitize "$sid")
+    start_file="$STATE_DIR/$key.start"
+    started=""; prompt_id=""; kind=""
+    [[ -n "$sid" && -r "$start_file" ]] && { read -r started prompt_id kind <"$start_file" || true; }
+    [[ "$prompt_id" == "-" ]] && prompt_id=""
+
+    # 巡回の回: ユーザーに伝えることが無ければ、何も知らせない
+    report=0
+    if [[ "$kind" == patrol ]]; then
+      [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] &&
+        [[ -n "$(tmux display -p -t "$TMUX_PANE" '#{@patrol_report}' 2>/dev/null)" ]] && report=1
+      (( report )) || exit 0
+    fi
+
     osc_notify "Claude Code" "${project:-task} 完了"
 
     # ---- ここから「done をスマホに飛ばす」判定 ----
@@ -76,17 +103,12 @@ case "$event" in
     # サブエージェント由来の停止では何もしない
     [[ -n "$(jqr '.agent_id')" ]] && exit 0
 
-    sid=$(jqr '.session_id')
     [[ -n "$sid" ]] || exit 0
-    key=$(sanitize "$sid")
-    start_file="$STATE_DIR/$key.start"
     [[ -r "$start_file" ]] || exit 0
-
-    started=""; prompt_id=""
-    read -r started prompt_id <"$start_file" || true
     [[ "$started" =~ ^[0-9]+$ ]] || exit 0
     elapsed=$(( $(date +%s) - started ))
-    (( elapsed >= MIN_SEC )) || exit 0
+    # 巡回で見つけたことは、短い回でも知らせる
+    (( report || elapsed >= MIN_SEC )) || exit 0
 
     # 同じプロンプトに対して二重に押し込まない
     marker="${prompt_id:-$started}"
@@ -108,13 +130,30 @@ case "$event" in
     [[ -n "$cwd" ]] && label=$(basename "$cwd")
     [[ -n "$label" ]] || label="${project:-task}"
 
-    reason="[notify hook] このターンは ${elapsed} 秒かかった (作業ディレクトリ: ${label})。停止する前に PushNotification ツールを 1 回だけ呼び、200 文字以内・1 行・マークダウン無しで「${label} で何が終わったか」と「ユーザーが次に判断すべきことがあればそれ」を伝えろ (status: proactive)。ツール呼び出し以外の作業・説明・要約・謝罪は一切追加するな。送信したらそのまま停止してよい。ツールが 'Not sent' を返しても再送は不要。"
+    what="このターンは ${elapsed} 秒かかった (作業ディレクトリ: ${label})"
+    tell="「${label} で何が終わったか」"
+    if (( report )); then
+      what="巡回で、ユーザーに伝えることが見つかった (作業ディレクトリ: ${label})"
+      tell="「${label} の巡回で何が見つかったか」"
+    fi
+    reason="[notify hook] ${what}。停止する前に PushNotification ツールを 1 回だけ呼び、200 文字以内・1 行・マークダウン無しで${tell}と「ユーザーが次に判断すべきことがあればそれ」を伝えろ (status: proactive)。ツール呼び出し以外の作業・説明・要約・謝罪は一切追加するな。送信したらそのまま停止してよい。ツールが 'Not sent' を返しても再送は不要。"
 
     jq -nc --arg reason "$reason" '{decision:"block", reason:$reason}'
     exit 0
     ;;
 
   notify)
+    # 返答を終えて 60 秒ほど入力が無いと idle_prompt が来る。何も見つからなかった巡回の後のものは知らせない
+    # (巡回は 5 分ごとなので、知らせると 5 分ごとに鳴る)
+    if [[ "$(jqr '.notification_type')" == idle_prompt ]]; then
+      sid=$(jqr '.session_id'); kind=""
+      [[ -n "$sid" && -r "$STATE_DIR/$(sanitize "$sid").start" ]] &&
+        { read -r _ _ kind <"$STATE_DIR/$(sanitize "$sid").start" || true; }
+      if [[ "$kind" == patrol ]]; then
+        [[ -n "${TMUX:-}" && -n "${TMUX_PANE:-}" ]] &&
+          [[ -n "$(tmux display -p -t "$TMUX_PANE" '#{@patrol_report}' 2>/dev/null)" ]] || exit 0
+      fi
+    fi
     msg=$(jqr '.message')
     osc_notify "Claude Code: 要対応" "$(trunc "$msg" 100)"
     exit 0

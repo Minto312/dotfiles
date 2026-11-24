@@ -64,6 +64,9 @@ tmux capture-pane -p -J -t "$pane" -S -200
 
 Claude は、全体の設定 (`~/.claude/settings.json`) のフックで、ペインの `@agent_state` に状態を書き込む (どう起動しても付く)。値は `working` (作業中)・`blocked` (確認や質問の画面で止まっている)・`done` (見ていないうちに終わった)・`idle` (待機)。
 
+- 例外として、リーダーの巡回の回 (プロンプトが `[巡回]` で始まる回。`orchestrate` スキル) は、状態を変えず、スマホにも知らせない。巡回の中でリーダーがペインの `@patrol_report` を付けたときだけ、普段の回と同じに扱う。そのため、リーダーが応答の途中かどうかは、`@agent_state` ではなく `~/.claude/sessions/<pid>.json` の `status` (`busy`) で見る
+- 複数の作業役を 1 つの処理で待つときは、下の `wait_state` ではなく `~/.config/tmux/bin/tmux-agents wait <秒> <ペイン>...` を使う (どれかが `idle`・`done`・`blocked` になるか、ペインが無くなると終わる)
+
 ```bash
 # 状態を待つ関数: wait_state <ペイン> <秒> <状態...>。どれかになれば 0、時間切れなら 1 で終わる
 wait_state() { local p=$1 t=$2; shift 2; local end=$((SECONDS + t)) s w
@@ -100,6 +103,7 @@ tmux send-keys -t "$pane" Enter
 ~/.config/tmux/bin/tmux-agents restart "$pane" xhigh   # effort を変える。keep は今のまま、default は既定
 ```
 
+- Bash の `run_in_background` の処理や `CronCreate` の予定が残っている Claude に `/exit` を送ると、「Background work is running」の確認の画面が出て、終了しない (2.1.331)。`1. Exit and stop tasks` (初めから選ばれている) を Enter で選ぶと、それらを止めて終了する。Escape は `3. Stay` と同じで、終了しない
 - zsh の別名 `claude` は、先に `--effort high` を付ける。`--effort` が 2 つあると後に書いたほうが効くので、送ったコマンドの `--effort` が使われる (2026-11-20 に、会話の記録 (JSONL) の各応答の `"effort"` で確かめた)
 - `tmux-agents restart` は、会話の ID を `~/.claude/sessions/<pid>.json` から、今の effort を会話の記録から取る。どちらも Claude Code の文書に書かれていない内部のファイルで、更新で変わることがある
 - すべての Claude をまとめて再起動するときは、`restart-claude` スキルを使う
