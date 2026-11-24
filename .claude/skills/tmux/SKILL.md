@@ -110,6 +110,7 @@ tmux send-keys -t "$pane" Enter
 - 待つ処理は、Bash の `run_in_background` で動かし、終わった知らせを受けてから読む
 - 全体の設定で Claude Code の代替画面を切ってある (`CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN=1`) ので、`capture-pane -p -J -t "$pane" -S -<行数>` で画面から消えた返答も読める。この設定より前に起動した Claude は代替画面のままで、見えている画面しか読めない (`#{alternate_on}` が 1、`#{history_size}` が 0)。長い報告は PR の本文やファイルに書かせ、そちらを読む
 - `blocked` は、確認や質問の画面で止まっている。`capture-pane` で画面を読んでから、どう答えるかを決める (自分で決められなければユーザーに聞く)
+- Claude のペインに文を送る前に、`tmux display -p -t "$pane" '#{pane_current_command}'` が `claude` であることを確かめる。再起動の途中などで前面がシェル (`zsh`・`bash`) に戻っていると、シェルがその文を実行する
 - `send-keys` で指示を送るのは、自分が起動した作業役のペインだけにする。ユーザーが使っているペイン (`pane_active` と `window_active` が 1 で、`session_attached` が 1 以上) や、入力欄にユーザーの入力があるペインには送らない
 
 ## 閉じる

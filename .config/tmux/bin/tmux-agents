@@ -31,8 +31,12 @@
 #     (tmux set -p -t "$TMUX_PANE" @patrol_report 1)。付けたあとは普段の回と同じに扱う (working、Stop で
 #     idle か done、notify.sh がスマホに知らせる)。@patrol_report は notify.sh も Stop で読むので、Stop では
 #     消さず、次の UserPromptSubmit で消す
-#   - 巡回しているリーダーは、ペインの @patrol に CronCreate の ID を入れておく。restart (restart-all を含む) で
-#     開き直したペインに @patrol があれば、巡回の予定と待つ処理を作り直す指示を「[巡回]」で送る
+#   - 巡回しているリーダーは、ペインの @patrol に CronCreate の ID を入れておく。Stop のフックが、これを会話の ID
+#     ごとのファイル (~/.local/state/tmux-agents/patrol/<会話の ID>) に写す。restart (restart-all を含む) は、
+#     開き直す会話にこのファイルがあれば、巡回の予定と待つ処理を作り直す指示を「[巡回]」で送る。
+#     SessionStart で Claude のプロセスが新しいとき (起動・--resume。develop の再起動の後を含む) と、SessionEnd
+#     (/clear を除く) では、ペインの @patrol を消す (予定はプロセスと一緒に消え、/clear では残る)。SessionStart で
+#     開き直した会話にファイルがあれば、作り直すよう促す文を出す (SessionStart のフックの出力は会話に入る)
 #   - wait は、動いている間、呼んだペイン (リーダー) の @waiting に「pid 対象のペイン...」を入れる。patrol は
 #     これで待つ処理が動いているかを見る。再起動してよいかの判断 (ready) では、wait だけを動かしている
 #     Bash ツールのシェルは残っている処理に数えない (再起動のあとに作り直すため)
@@ -132,26 +136,45 @@ panes_list() {
       }'
 }
 
-# 入力欄にユーザーの入力があれば 0。入力欄は画面の最後の ❯ の行。薄い文字 (ESC[2m) は入力の候補なので数えない
+# Claude のペインの画面を読む。screen_scan <ペイン> <body|input|state>
+#   body : 入力欄より上 (入力欄が無ければ全体)。エスケープは除く
+#   input: 入力欄の行 (エスケープ付き。has_input が薄い文字を除くため)。入力欄が無ければ何も出さない
+#   state: blocked (確認や質問の画面)・working (経過時間の行がある)・idle・unknown (入力欄も確認の画面も無い)
+# 入力欄は、画面の最後の罫線 (─ で始まる行) と、その上 12 行以内の罫線にはさまれ、上の罫線の次の行が ❯ で
+# 始まる範囲 (複数行の入力もある)。確認や質問の画面が出ている間は、入力欄が無い。
+# 確認の画面の選択肢 (  ❯ 1. …) や、ツールの出力に出た文字列 (「Esc to cancel」など) を取り違えないように、
+# 確認の画面は「入力欄が無く、下の 10 行に操作の案内がある」、経過時間の行は「行頭の記号のあと、… と ( が続く行」で見る
+screen_scan() {
+  t capture-pane -p -e -J -t "$1" 2>/dev/null | LC_ALL=C.UTF-8 awk -v mode="$2" '
+    { raw[NR] = $0; p = $0; gsub(/\033\[[0-9;:]*m/, "", p); plain[NR] = p }
+    END {
+      top = 0; bot = 0
+      for (i = NR; i >= 1; i--) if (plain[i] ~ /^─/) { bot = i; break }
+      if (bot) for (i = bot - 1; i >= 1 && i >= bot - 12; i--) if (plain[i] ~ /^─/) { top = i; break }
+      box = (top && plain[top + 1] ~ /^❯/)
+      if (mode == "input") { if (box) for (i = top + 1; i < bot; i++) print raw[i]; exit }
+      n = box ? top - 1 : NR
+      if (mode == "body") { for (i = 1; i <= n; i++) print plain[i]; exit }
+      if (!box) {
+        k = 0
+        for (i = NR; i >= 1 && k < 10; i--) {
+          if (plain[i] !~ /[^[:space:]]/) continue
+          k++
+          if (plain[i] ~ /Enter to confirm|Enter to select|Esc to cancel|Do you want to/) { print "blocked"; exit }
+        }
+      }
+      for (i = 1; i <= n; i++) if (plain[i] ~ /^[^[:space:]●]+ [^[:space:]]+… \(/) { print "working"; exit }
+      print (box ? "idle" : "unknown")
+    }'
+}
+
+# 入力欄にユーザーの入力があれば 0。薄い文字 (ESC[2m) は入力の候補なので数えない。入力欄が無い (確認の画面) なら 1
 has_input() {
   local line
-  line="$(t capture-pane -p -e -t "$1" 2>/dev/null | grep '❯' | tail -1)"
+  line="$(screen_scan "$1" input)"
   line="${line#*❯}"
   line="$(printf '%s' "$line" | LC_ALL=C sed -E 's/\x1b\[2m[^\x1b]*//g; s/\x1b\[[0-9;]*m//g; s/\xc2\xa0//g; s/[[:space:]]//g')"
   [ -n "$line" ]
-}
-
-# Claude のペインの画面のうち、入力欄より上を出力する。入力欄は、上下を罫線ではさまれた最後の ❯ の行。
-# 入力欄が無ければ (確認や質問の画面)、全体を出力する
-screen_body() {
-  t capture-pane -p -J -t "$1" 2>/dev/null | awk '
-    { l[NR] = $0 }
-    END {
-      n = NR
-      for (i = NR - 1; i > 1; i--)
-        if (l[i] ~ /❯/ && l[i - 1] ~ /^─/ && l[i + 1] ~ /^─/) { n = i - 2; break }
-      for (i = 1; i <= n; i++) print l[i]
-    }'
 }
 
 # Claude が Bash ツールのシェルを動かしていれば 0。返答を終えても run_in_background の処理が残っていることがあり、
@@ -170,6 +193,16 @@ has_shell_task() {
   return 1
 }
 
+# Claude (pid) が応答の途中なら 0。Claude Code が sessions/<pid>.json に書く status で見る
+# (2.1.331 で見た値は idle・busy・shell・waiting。busy だけが応答の途中)
+WHY_BUSY="応答の途中 (巡回の回を含む)"
+is_busy() { [ "$(jq -r '.status // empty' "$cfg/sessions/$1.json" 2>/dev/null)" = busy ]; }
+
+# 巡回しているリーダーの記録。会話の ID ごとのファイルに、CronCreate の ID を入れる。Stop のフックが、
+# ペインの @patrol に合わせて書く・消す。再起動 (restart_pane) と SessionStart のフックが、開き直した会話が
+# 巡回をしていたかをこれで見る。ペインの @patrol は、develop の再起動で消え、別の会話が同じペインで動くこともある
+patrol_dir="${XDG_STATE_HOME:-$HOME/.local/state}/tmux-agents/patrol"
+
 # 再起動してよければ 0: 待機 (idle・done) で、Bash ツールの処理が残っておらず、ユーザーが使っていない
 # (そのペインを表示していない。TA_ALLOW_FOCUS に挙げたペインは表示していてもよい。入力欄に入力がない)。
 # 状態が無いペインは画面で判断する。よくないときは、理由を変数 why に入れる
@@ -178,17 +211,15 @@ ready() {
   why=""
   s="$(t display -p -t "$1" '#{@agent_state}' 2>/dev/null)" || { why="ペインが無い"; return 1; }
   if [ -z "$s" ]; then
-    if t capture-pane -p -t "$1" -S -15 | grep -qE 'Do you want to|Esc to cancel|Enter to select|…[[:space:]]*\('; then
-      why="画面が作業中か確認の画面"
-      return 1
-    fi
+    case "$(screen_scan "$1" state)" in
+      working|blocked|unknown) why="画面が作業中か確認の画面"; return 1 ;;
+    esac
     s=idle
   fi
   case "$s" in idle|done) ;; *) why="状態が $s"; return 1 ;; esac
   c="$(claude_pid "$(t display -p -t "$1" '#{pane_pid}')")" || { why="Claude が動いていない"; return 1; }
   # 巡回の回は @agent_state を変えないので、Claude Code が sessions/<pid>.json に書く status でも見る
-  [ "$(jq -r '.status // empty' "$cfg/sessions/$c.json" 2>/dev/null)" = busy ] &&
-    { why="応答の途中 (巡回の回を含む)"; return 1; }
+  is_busy "$c" && { why="$WHY_BUSY"; return 1; }
   has_shell_task "$c" && { why="Bash ツールの処理が残っている"; return 1; }
   if [ "${TA_ALLOW_FOCUS:-}" != "$1" ] &&
     [ "$(t display -p -t "$1" '#{&&:#{&&:#{pane_active},#{window_active}},#{session_attached}}')" = 1 ]; then
@@ -218,11 +249,22 @@ wait_ready() {
 # 止まる処理が、開き直した後に作り直すものだけで、1 が選ばれているときに 0 (Enter で 1 を選んでよい)。
 # 作り直すものは、待つ処理 (tmux-agents wait) のシェル (「shell · …」) と、巡回しているリーダー (@patrol がある)
 # の巡回の予定 (「scheduled task · … · [巡回] …」。CronCreate の予定もこの画面に並ぶ)。
-# ほかのもの (エージェント、ほかの予定) が並んでいるときや、待つ処理以外のシェルがあるときは選ばない
+# ほかのもの (エージェント、ほかの予定) が並んでいるときや、待つ処理以外のシェルがあるときは選ばない。
+# 確認の画面は、入力欄が無く (screen_scan が blocked)、見えている画面の下の 25 行に文言があるときに限る。
+# ツールの出力にこの文言が出た画面 (確認の画面を読んで表示したリーダーなど) や、履歴に残った前の画面と取り違えないため
+dialog_tail() {
+  # 末尾の空行を除いた下の 25 行 (会話が短いと、画面の下が空行になる)
+  t capture-pane -p -J -t "$1" 2>/dev/null |
+    awk '{ l[NR] = $0 } NF { last = NR } END { for (i = (last > 25 ? last - 24 : 1); i <= last; i++) print l[i] }'
+}
+exit_dialog_shown() {
+  [ "$(screen_scan "$1" state)" = blocked ] && dialog_tail "$1" | grep -q 'Background work is running'
+}
 exit_dialog_ok() {
   local scr items re='^[[:space:]]*shell · '
-  scr="$(t capture-pane -p -J -t "$1" -S -30 2>/dev/null)"
-  grep -q 'Background work is running' <<<"$scr" && grep -qE '❯ *1\. Exit and stop tasks' <<<"$scr" || return 1
+  exit_dialog_shown "$1" || return 1
+  scr="$(dialog_tail "$1")"
+  grep -qE '❯ *1\. Exit and stop tasks' <<<"$scr" || return 1
   items="$(awk '/The following will stop when you exit/ { f = 1; next } /Exit and stop tasks/ { f = 0 } f && NF' <<<"$scr")"
   [ -n "$items" ] || return 1
   [ -n "$(t display -p -t "$1" '#{@patrol}' 2>/dev/null)" ] && re+='|^[[:space:]]*scheduled task · .* · \[巡回\]'
@@ -262,7 +304,16 @@ restart_pane() {
     $0 == "--permission-mode" { n = 1 }
     /^--permission-mode=[a-zA-Z]+$/ { printf " %s", $0 }')"
   [[ "$perm" =~ ^(\ --dangerously-skip-permissions|\ --permission-mode[\ =][a-zA-Z]+)*$ ]] || perm=""
+  # 巡回をしていた会話か (開き直した後に、巡回を作り直させる)。@patrol は終わるときにフックが消すので、先に見る
+  local had_patrol=0
+  [ -e "$patrol_dir/$id" ] && had_patrol=1
 
+  # wait_ready の後に (巡回の予定などで) 応答を始めていないかを、/exit を打つ直前にもう一度見る。
+  # 応答の途中に /exit を打つと、そのターンを止めることがある
+  if is_busy "$c"; then
+    wait_ready "$p" "$wait" && ! is_busy "$c" ||
+      { say "$p: 飛ばした。/exit を打つ直前に応答を始め、待っても待機に戻らなかった ($why)"; return 1; }
+  fi
   [ "$direct" = 1 ] && t set -p -t "$p" remain-on-exit on
   t send-keys -t "$p" -l "/exit"
   sleep 0.5
@@ -270,13 +321,24 @@ restart_pane() {
   local answered=0
   for i in $(seq 60); do
     kill -0 "$c" 2>/dev/null || break
-    # 待つ処理 (tmux-agents wait) が残っていると、/exit が確認の画面を出す。それだけなら「Exit and stop tasks」を選ぶ
-    if [ "$answered" = 0 ] && exit_dialog_ok "$p" "$c"; then t send-keys -t "$p" Enter; answered=1; fi
+    # 待つ処理や巡回の予定が残っていると、/exit が確認の画面を出す。並ぶのが作り直すものだけなら
+    # 「Exit and stop tasks」を選ぶ。ほかのものがあれば、すぐに Escape (Stay) で閉じて飛ばす
+    if [ "$answered" = 0 ] && exit_dialog_shown "$p"; then
+      sleep 1   # 並ぶものが出そろうのを待つ
+      if exit_dialog_ok "$p" "$c"; then
+        t send-keys -t "$p" Enter
+        answered=1
+      else
+        t send-keys -t "$p" Escape
+        [ "$direct" = 1 ] && t set -p -t "$p" -u remain-on-exit
+        say "$p: 飛ばした。/exit の確認の画面に、待つ処理と巡回の予定のほかに止まるものがあった (会話 $id)"
+        return 1
+      fi
+    fi
     sleep 1
   done
   if kill -0 "$c" 2>/dev/null; then
-    # 確認の画面が残っていれば閉じる (Escape は「Stay」と同じ)
-    t capture-pane -p -t "$p" -S -30 | grep -q 'Background work is running' && t send-keys -t "$p" Escape
+    exit_dialog_shown "$p" && t send-keys -t "$p" Escape
     [ "$direct" = 1 ] && t set -p -t "$p" -u remain-on-exit
     say "$p: /exit で終わらなかった (会話 $id)"
     return 1
@@ -315,14 +377,17 @@ restart_pane() {
   [ "$(t display -p -t "$p" '#{@agent_state}')" = idle ] || { say "$p: 起動したが待機にならない (会話 $id)"; return 1; }
   [ "$newid" = "$id" ] || { say "$p: 起動したが会話が違う ($id のはずが ${newid:-不明})"; return 1; }
   say "$p: 再起動した (会話 $id、effort ${eff:-既定})"
-  resume_patrol "$p"
+  [ "$had_patrol" = 1 ] && resume_patrol "$p"
 }
 
-# 巡回していたリーダー (@patrol がある) に、巡回の予定と待つ処理を作り直させる。どちらも Claude が終わると
-# 消えるため。「[巡回]」で始めるので、フックはこの回を巡回として扱う (状態を変えず、通知しない)
+# 巡回していたリーダーに、巡回の予定と待つ処理を作り直させる。どちらも Claude が終わると消えるため。
+# 「[巡回]」で始めるので、フックはこの回を巡回として扱う (状態を変えず、通知しない)。
+# 送る前に、前面が Claude で、待機であることを確かめる (シェルに打ち込むと、シェルが文を実行するため)
 resume_patrol() {
   local p="$1"
-  [ -n "$(t display -p -t "$p" '#{@patrol}' 2>/dev/null)" ] || return 0
+  claude_pid "$(t display -p -t "$p" '#{pane_pid}')" >/dev/null &&
+    [ "$(t display -p -t "$p" '#{pane_current_command}')" = claude ] ||
+    { say "$p: 巡回を作り直す指示を送っていない (前面が Claude でない)"; return 1; }
   t send-keys -t "$p" -l "[巡回] 再起動で、巡回の予定 (CronCreate) と待つ処理が消えました。orchestrate スキルの「巡回」の節に従って、巡回を作り直し (@patrol も新しい ID にする)、作業を持つ作業役の待ちを起動し直してから、この回の巡回をしてください"
   sleep 1
   t send-keys -t "$p" Enter
@@ -349,11 +414,15 @@ restart_workers() {
 # リーダーに、作業役の再起動を頼む
 notify_leader() {
   local l="$1" from="$2" reason="$3" buf="restart-${1#%}-$$"
-  wait_ready "$l" 0 || { say "$l: 飛ばした。リーダーが作業中か、使われていた ($why)。作業役も再起動していない"; return 1; }
+  # 外す理由が「応答の途中」だけなら、巡回の回 (数秒から数十秒) のことが多いので、90 秒まで待ち直す
+  if ! wait_ready "$l" 0; then
+    [ "$why" = "$WHY_BUSY" ] && wait_ready "$l" 90 ||
+      { say "$l: 飛ばした。リーダーが作業中か、使われていた ($why)。作業役も再起動していない"; return 1; }
+  fi
   t set -p -t "$l" @restart requested
   t load-buffer -b "$buf" - <<EOF
 [全体の再起動] ユーザーの依頼で、develop の Claude Code をすべて再起動します (理由: ${reason:-指定なし})。リーダーのあなた ($l) は、次のとおり進めてください。
-1. このウィンドウの作業役に、新しい作業を渡すのをやめる。作業役に指示を送っている途中なら、送り終えてよい
+1. このウィンドウの作業役に、新しい作業を渡すのをやめる。作業役に指示を送っている途中なら、送り終えてよい。それ以降、あなたが再起動されるまで、作業役のペインには何も送らない (待つ処理の終わりや巡回で起きても、結果を読むだけにする。作業役は再起動の途中で一度シェルに戻るので、そこに貼った文はシェルが実行する)
 2. Bash の run_in_background で \`$self_path restart-workers $l\` を動かす。待機の作業役を、1 つずつ同じ会話のまま開き直す (effort は今のまま。ペインの ID と名前は変わらない)。作業中の作業役 (Bash ツールの処理が残っている、確認の画面で止まっている、ユーザーが使っているものを含む) は、待たずに今回は外す
 3. 終わったら、返答に結果 (再起動した作業役と、飛ばした作業役とその理由) を 3 行以内で書いて止まる。結果は全体の再起動の記録にも書かれるので、別のファイルに残さなくてよい。あなたが止まると、$from から動いている処理が、あなたを同じ会話のまま再起動する
 EOF
@@ -435,7 +504,24 @@ case "$cmd" in
           exit 0   # 巡回の回のツール呼び出し
         fi
         ;;
-      idle|blocked) state="$event" ;;
+      idle)
+        state=idle
+        # SessionStart: Claude のプロセスが新しく始まったとき (起動・--resume。develop の再起動の後の
+        # tmux-restore も --resume)、前のプロセスの巡回の予定は消えているので、ペインの巡回の印を消す。
+        # /clear や会話の中の /resume ではプロセスが同じで、予定も残る (2026-11-25 に /clear で確かめた)。
+        # 開き直した会話が巡回をしていたなら、そのことを文脈に入れる (SessionStart のフックの出力は会話に入る)
+        if [ "$(jq -r '.hook_event_name // ""' <<<"$input" 2>/dev/null)" = SessionStart ]; then
+          c="$(claude_pid "$(t display -p -t "$TMUX_PANE" '#{pane_pid}')")"
+          age="$([ -n "$c" ] && ps -o etimes= -p "$c" 2>/dev/null | tr -d ' ')"
+          if [[ "${age:-}" =~ ^[0-9]+$ ]] && ((age < 120)); then
+            for o in @patrol @patrol_prev @patrol_report; do t set -p -t "$TMUX_PANE" -u "$o"; done
+            sid="$(jq -r '.session_id // ""' <<<"$input" 2>/dev/null)"
+            [[ "$sid" =~ ^[0-9a-f-]{36}$ ]] && [ -e "$patrol_dir/$sid" ] &&
+              echo "[tmux-agents] この会話は、前の Claude のプロセスで巡回 (orchestrate スキル) をしていました。巡回の予定 (CronCreate) と待つ処理は、Claude が終わると消えます。develop の再起動の後なら、ペインの ID が変わり、@agent_name も消えています。作業を持つ作業役がいれば、orchestrate スキルの「巡回」の「開き直されたとき」に従って、名前・巡回・待つ処理を作り直してください"
+          fi
+        fi
+        ;;
+      blocked) state=blocked ;;
       notify)
         typ="$(jq -r '.notification_type // ""' <<<"$input" 2>/dev/null)"
         msg="$(jq -r '.message // ""' <<<"$input" 2>/dev/null)"
@@ -449,6 +535,17 @@ case "$cmd" in
         # 終わったとき、そのペインのウィンドウを見ている (表示中で、つながっている) なら待機、そうでなければ完了
         seen="$(t display -p -t "$TMUX_PANE" '#{&&:#{window_active},#{session_attached}}')"
         [ "$seen" = 1 ] && state=idle || state=done
+        # 巡回の記録を、ペインの @patrol に合わせる (会話の ID ごと。再起動や develop の再起動の後に使う)
+        sid="$(jq -r '.session_id // ""' <<<"$input" 2>/dev/null)"
+        if [[ "$sid" =~ ^[0-9a-f-]{36}$ ]]; then
+          pv="$(opt @patrol)"
+          if [ -n "$pv" ]; then
+            mkdir -p "$patrol_dir" && printf '%s\n' "$pv" >"$patrol_dir/$sid"
+            find "$patrol_dir" -type f -mtime +30 -delete 2>/dev/null
+          elif [ -e "$patrol_dir/$sid" ]; then
+            rm -f "$patrol_dir/$sid"
+          fi
+        fi
         # 何も見つからなかった巡回の回 (@patrol_report が無い) は、巡回の前の状態に戻す。
         # 見つけた回は普段どおり。@patrol_report は notify.sh も読むので、ここでは消さない
         prev="$(opt @patrol_prev)"
@@ -466,6 +563,11 @@ case "$cmd" in
         ;;
       end)
         t set -p -t "$TMUX_PANE" -u @agent_state
+        # Claude のプロセスが終わると巡回の予定も消えるので、ペインの巡回の印を消す。/clear (reason が clear)
+        # ではプロセスが続き、予定も残るので消さない。会話ごとの記録 ($patrol_dir) は、開き直すときのために残す
+        if [ "$(jq -r '.reason // ""' <<<"$input" 2>/dev/null)" != clear ]; then
+          for o in @patrol @patrol_prev @patrol_report; do t set -p -t "$TMUX_PANE" -u "$o"; done
+        fi
         redraw
         exit 0
         ;;
@@ -486,14 +588,14 @@ case "$cmd" in
   summary)
     [ -n "${1:-}" ] && TA_SOCKET_PATH="$1"
     # 利用者が Esc で止めたときは Claude の Stop フックが呼ばれない。そこで、作業中・確認待ちのペインだけ
-    # 画面の下の方を読み、作業中の行 (「…」の後に経過時間) も確認の画面も見えなければ待機に戻す。
+    # 画面を読み (screen_scan)、作業中の行も確認の画面も見えなければ待機に戻す。入力欄も確認の画面も
+    # 見分けられない画面 (unknown) では変えない。
+    # 以前は画面全体から「Esc to cancel」などの文字列を探していたので、ツールの出力にその文字列が出た
+    # ペイン (確認の画面を読んで表示したリーダーなど) が blocked になっていた (2026-11-25)
     t list-panes -a -F '#{pane_id} #{@agent_state}' | while read -r pane state; do
       case "$state" in working|blocked) ;; *) continue ;; esac
-      screen="$(t capture-pane -p -t "$pane" -S -15 2>/dev/null)"
-      if grep -qE 'Do you want to|Esc to cancel|Enter to select' <<<"$screen"; then now=blocked
-      elif grep -qE '…[[:space:]]*\(' <<<"$screen"; then now=working
-      else now=idle
-      fi
+      now="$(screen_scan "$pane" state)"
+      [ "$now" = unknown ] && continue
       [ "$now" != "$state" ] && t set -p -t "$pane" @agent_state "$now"
     done
     t list-panes -a -F '#{@agent_state}' | awk '
@@ -546,16 +648,27 @@ case "$cmd" in
     fi
     declare -A last=()
     end=$((SECONDS + limit)) hit=0
-    # tmux 3.6 の display -t は、無いペインでも失敗せず空を返すので、#{pane_id} が空かで見る
+    # tmux 3.6 の display -t は、無いペインでも失敗せず空を返すので、#{pane_id} が空かで見る。
+    # idle・done でも、Bash の処理 (run_in_background のテストやビルド) が残っている作業役は、その処理が
+    # 終わると続きを始めるので、終わりとみなさない (状態の後に +shell を付けて区別する)
     while :; do
       for p in "$@"; do
-        read -r id s < <(t display -p -t "$p" '#{pane_id} #{@agent_state}' 2>/dev/null)
+        read -r id s ppid < <(t display -p -t "$p" '#{pane_id} #{?#{@agent_state},#{@agent_state},-} #{pane_pid}' 2>/dev/null)
         [ -n "${id:-}" ] || { hit=1; continue; }
-        case "${s:-}" in idle|done|blocked) [ "${last[$p]-}" = "$s" ] && hit=1 ;; esac
-        last[$p]="${s:-}"
+        case "$s" in
+          idle|done) c="$(claude_pid "$ppid")" && has_shell_task "$c" && s="$s+shell" ;;
+        esac
+        case "$s" in idle|done|blocked) [ "${last[$p]-}" = "$s" ] && hit=1 ;; esac
+        last[$p]="$s"
       done
       [ "$hit" = 1 ] && break
       ((SECONDS < end)) || break
+      # 同じペインで新しい待つ処理が始まったら (起動し直したのに前のものを止めていない)、同じ変化で 2 回
+      # 起こさないように、先に終わる。終わったことはリーダーに届くので、何もしなくてよいと出す
+      if [ -n "$me" ] && [ "$(t display -p -t "$me" '#{@waiting}' 2>/dev/null)" != "$mark" ]; then
+        echo "新しい待つ処理に置き換えられたので終わった (何もしなくてよい)"
+        exit 3
+      fi
       sleep 2
     done
     for p in "$@"; do
@@ -586,13 +699,20 @@ case "$cmd" in
       # done でも、run_in_background の処理が残っていれば、終わると続きを始める (まだ終わっていない)
       sh=なし
       c="$(claude_pid "$(t display -p -t "$p" '#{pane_pid}')")" && has_shell_task "$c" && sh=残っている
-      body="$(screen_body "$p")"
+      body="$(screen_scan "$p" body)"
+      # blocked は、画面に確認の画面が無ければ、そう書き添える (状態が古いか、取り違えていることがある)
+      [ "$state" = blocked ] && [ "$(screen_scan "$p" state)" != blocked ] && state="blocked(確認の画面は見えない)"
       # 進んでいるかは、経過時間が入る行 (…) と Tip を除いた画面で比べる
       h="$(grep -v -e '…' -e 'Tip:' <<<"$body" | md5sum | cut -c1-16)"
       old="$(t display -p -t "$p" '#{@patrol_hash}')"
       t set -p -t "$p" @patrol_hash "$h"
       if [ -z "$old" ]; then chg=初回; elif [ "$old" = "$h" ]; then chg=変わっていない; else chg=変わった; fi
       echo "== $p $name 状態=$state Bash の処理=$sh 使用中=$use 待つ処理の対象=$waitv 前の巡回からの画面=$chg"
+      # 前の巡回と同じ画面は、会話を増やさないように省く (読みたいときは capture-pane で読む)
+      if [ "$chg" = 変わっていない ]; then
+        echo "  (画面は前の巡回と同じなので省いた)"
+        continue
+      fi
       grep -v '^[[:space:]]*$' <<<"$body" | tail -n "${TA_PATROL_LINES:-12}" |
         LC_ALL=C.UTF-8 sed -E 's/[[:space:]]+$//; s/^(.{200}).+/\1…/'
     done
