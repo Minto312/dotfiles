@@ -28,6 +28,15 @@ return {
     mods = 'CTRL|SHIFT',
     action = wezterm.action.PasteFrom('Clipboard'),
   },
+  -- 画像の貼り付けは Alt+V。手元のクリップボードの画像を develop に送り、そのパスを貼る (image_paste.lua)。
+  -- ⚠ tmux のコピーモード (mode-keys emacs) の M-v (1 画面上へ) は届かなくなる。PageUp で代わりになる
+  {
+    key = 'v',
+    mods = 'ALT',
+    action = wezterm.action_callback(function(window, pane)
+      require("image_paste").paste(window, pane)
+    end),
+  },
   -- Shift+Enter を Alt+Enter として送る (Claude Code の改行入力用)
   -- 端末は通常 Shift+Enter と Enter を区別しないため、別シーケンスに変換する
   {
